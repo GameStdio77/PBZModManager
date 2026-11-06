@@ -33,9 +33,9 @@ Phantom Blade Zero(팬텀 블레이드 제로)용 모드 매니저입니다. 받
 ### 사용법
 
 1. [.NET 8 데스크톱 런타임](https://dotnet.microsoft.com/download/dotnet/8.0)(x64)이 필요합니다.
-2. [릴리스](https://github.com/GameStdio77/PBZModManager/releases)에서 `PBZModManager.exe`를 받아, 모드 압축 파일을 모아 둘 폴더에 두고 실행합니다. **이 폴더가 모드 보관 폴더가 되고**, 설치 기록은 그 안의 `.manager` 폴더에 저장됩니다. (예: 게임 폴더 안에 `[] MOD` 폴더를 만들어 두기)
+2. [릴리스](https://github.com/GameStdio77/PBZModManager/releases)에서 `PBZModManager.exe`를 받아, 원하는 폴더에 두고 실행합니다. 받은 모드 파일과 설치 기록은 모두 **그 옆의 `.manager` 폴더**에 저장됩니다. (예: 게임 폴더 안에 `[] MOD` 폴더를 만들어 두기)
 3. 게임 폴더는 자동으로 찾습니다(실행 파일 위쪽 폴더, 각 드라이브의 Steam 라이브러리). 못 찾으면 직접 고르라고 묻고, 나중에 [폴더 설정]에서 바꿀 수 있습니다.
-4. Nexus Mods 등에서 받은 모드 압축 파일(zip·rar·7z)을 창에 끌어다 놓습니다. rar·7z는 같은 이름의 zip으로 바꿔 보관합니다.
+4. Nexus Mods 등에서 받은 모드 압축 파일(zip·rar·7z)을 창에 끌어다 놓습니다. 파일은 복사가 아니라 `.manager\archives`로 **옮겨집니다**. rar·7z는 같은 이름의 zip으로 바꿔 보관하고 원본은 휴지통으로 보냅니다.
 5. 처음 보는 모드면 정보 입력 창이 뜹니다. **맨 위의 주소 칸에 모드 페이지 주소를 직접 넣어 주세요.** 매니저가 모드 페이지를 알아낼 방법은 이 주소뿐입니다.
    - Nexus 주소(`https://www.nexusmods.com/phantombladezero/mods/번호`)를 넣으면 **카테고리와 설치 방법을 Nexus API로 자동으로 가져옵니다.**
    - GitHub 저장소 주소도 됩니다. 이 경우 GitHub 릴리스로 버전을 확인합니다.
@@ -50,6 +50,7 @@ Phantom Blade Zero(팬텀 블레이드 제로)용 모드 매니저입니다. 받
 
 | 항목 | 내용 |
 |---|---|
+| `archives/` | 받은 모드 압축 파일. [모드 폴더 열기]로 열 수 있습니다. |
 | `history/` | 설치 기록과 덮어쓴 원본 백업. 제거·되돌리기에 필요하니 지우지 마세요. |
 | `leftovers/` | 제거할 때 지우지 않고 옮겨 둔 파일. [보관 폴더 비우기]로 휴지통에 보낼 수 있습니다. |
 | `meta.json` | 모드별 카테고리·주소·메모·실행 도구·설치 방법 |
@@ -97,9 +98,9 @@ A mod manager for Phantom Blade Zero. It installs downloaded mod archives where 
 ### Usage
 
 1. Requires the [.NET 8 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/8.0) (x64).
-2. Download `PBZModManager.exe` from [Releases](https://github.com/GameStdio77/PBZModManager/releases), put it in the folder where you keep mod archives, and run it. **That folder becomes the mod folder**, and the records go in its `.manager` folder (for example, a `[] MOD` folder inside the game folder).
+2. Download `PBZModManager.exe` from [Releases](https://github.com/GameStdio77/PBZModManager/releases), put it in any folder, and run it. Downloaded mod files and the install records all go in **the `.manager` folder next to it** (for example, a `[] MOD` folder inside the game folder).
 3. The game folder is found automatically (folders above the exe, Steam libraries on every drive). If not, you are asked once; change it later in [Folder settings].
-4. Drop mod archives (zip, rar or 7z, from Nexus Mods or elsewhere) on the window. A rar or 7z is kept as a zip of the same name.
+4. Drop mod archives (zip, rar or 7z, from Nexus Mods or elsewhere) on the window. Files are **moved** into `.manager\archives`, not copied. A rar or 7z is kept as a zip of the same name and the original goes to the Recycle Bin.
 5. For a mod it has not seen, the info window opens. **Type the mod page's address in the address field at the top.** The address is the only way the manager knows the mod's page.
    - With a Nexus address (`https://www.nexusmods.com/phantombladezero/mods/<number>`), **the category and install steps are fetched automatically through the Nexus API.**
    - A GitHub repository address works too; versions are then checked against its GitHub releases.
@@ -114,6 +115,7 @@ Installing and removing are blocked while the game runs. The language is picked 
 
 | Item | Contents |
 |---|---|
+| `archives/` | The mod archives you added. [Open mod folder] opens it. |
 | `history/` | Install records and backups of overwritten files. Needed to remove and undo; do not delete. |
 | `leftovers/` | Files moved aside instead of deleted on removal. [Empty kept files] sends them to the Recycle Bin. |
 | `meta.json` | Each mod's category, address, memo, tool, install steps |
@@ -161,9 +163,9 @@ Phantom Blade Zero（影之刃零）的模组管理器。它会把下载的模�
 ### 使用方法
 
 1. 需要 [.NET 8 桌面运行时](https://dotnet.microsoft.com/download/dotnet/8.0)（x64）。
-2. 从 [Releases](https://github.com/GameStdio77/PBZModManager/releases) 下载 `PBZModManager.exe`，放到存放模组压缩包的文件夹中运行。**该文件夹即为模组存放文件夹**，安装记录保存在其中的 `.manager` 文件夹里（例如在游戏文件夹中建一个 `[] MOD` 文件夹）。
+2. 从 [Releases](https://github.com/GameStdio77/PBZModManager/releases) 下载 `PBZModManager.exe`，放到任意文件夹中运行。下载的模组文件和安装记录都保存在**程序旁的 `.manager` 文件夹**中（例如在游戏文件夹中建一个 `[] MOD` 文件夹）。
 3. 会自动查找游戏文件夹（程序所在位置的上级文件夹、各磁盘的 Steam 库）。找不到时会让你选择一次，之后可在 [文件夹设置] 中更改。
-4. 把从 Nexus Mods 等处下载的模组压缩包（zip、rar、7z）拖到窗口中。rar 和 7z 会转换为同名的 zip 保存。
+4. 把从 Nexus Mods 等处下载的模组压缩包（zip、rar、7z）拖到窗口中。文件会被**移动**（而不是复制）到 `.manager\archives`。rar 和 7z 会转换为同名的 zip 保存，原文件移到回收站。
 5. 遇到新模组时会弹出信息窗口。**请在最上方的地址栏中手动填写模组页面地址。** 地址是管理器得知模组页面的唯一方式。
    - 填写 Nexus 地址（`https://www.nexusmods.com/phantombladezero/mods/编号`）后，**会通过 Nexus API 自动获取分类和安装方法。**
    - 也可以填写 GitHub 仓库地址，此时通过 GitHub Releases 检查版本。
@@ -178,6 +180,7 @@ Phantom Blade Zero（影之刃零）的模组管理器。它会把下载的模�
 
 | 项目 | 内容 |
 |---|---|
+| `archives/` | 添加的模组压缩包。可用 [打开模组文件夹] 打开。 |
 | `history/` | 安装记录和被覆盖原文件的备份。移除和撤销时需要，请勿删除。 |
 | `leftovers/` | 移除时没有删除而移到这里的文件。可用 [清空保留文件夹] 移到回收站。 |
 | `meta.json` | 每个模组的分类、地址、备注、运行工具、安装方法 |
@@ -225,9 +228,9 @@ Phantom Blade Zero 用の Mod マネージャーです。ダウンロードし�
 ### 使い方
 
 1. [.NET 8 デスクトップランタイム](https://dotnet.microsoft.com/download/dotnet/8.0)（x64）が必要です。
-2. [Releases](https://github.com/GameStdio77/PBZModManager/releases) から `PBZModManager.exe` をダウンロードし、Mod の圧縮ファイルを置くフォルダーに入れて実行します。**そのフォルダーが Mod 保管フォルダーになり**、インストール記録はその中の `.manager` フォルダーに保存されます（例：ゲームフォルダー内に `[] MOD` フォルダーを作る）。
+2. [Releases](https://github.com/GameStdio77/PBZModManager/releases) から `PBZModManager.exe` をダウンロードし、好きなフォルダーに入れて実行します。ダウンロードした Mod ファイルとインストール記録は、すべて**隣の `.manager` フォルダー**に保存されます（例：ゲームフォルダー内に `[] MOD` フォルダーを作る）。
 3. ゲームフォルダーは自動で探します（実行ファイルの上位フォルダー、各ドライブの Steam ライブラリ）。見つからない場合は一度だけ選ぶよう求められ、後から [フォルダー設定] で変更できます。
-4. Nexus Mods などからダウンロードした Mod の圧縮ファイル（zip・rar・7z）をウィンドウにドラッグします。rar・7z は同じ名前の zip に変換して保管します。
+4. Nexus Mods などからダウンロードした Mod の圧縮ファイル（zip・rar・7z）をウィンドウにドラッグします。ファイルはコピーではなく `.manager\archives` に**移動**されます。rar・7z は同じ名前の zip に変換して保管し、元のファイルはごみ箱に送ります。
 5. 初めての Mod なら情報入力ウィンドウが開きます。**一番上のアドレス欄に Mod ページのアドレスを手で入力してください。** マネージャーが Mod のページを知る方法はこのアドレスだけです。
    - Nexus のアドレス（`https://www.nexusmods.com/phantombladezero/mods/番号`）を入れると、**カテゴリーとインストール方法を Nexus API で自動取得します。**
    - GitHub リポジトリのアドレスも使えます。その場合は GitHub のリリースでバージョンを確認します。
@@ -242,6 +245,7 @@ Phantom Blade Zero 用の Mod マネージャーです。ダウンロードし�
 
 | 項目 | 内容 |
 |---|---|
+| `archives/` | 追加した Mod の圧縮ファイル。[Mod フォルダーを開く] で開けます。 |
 | `history/` | インストール記録と上書きした元ファイルのバックアップ。削除・元に戻すときに必要なので消さないでください。 |
 | `leftovers/` | 削除時に消さずに移したファイル。[保管フォルダーを空にする] でごみ箱に送れます。 |
 | `meta.json` | Mod ごとのカテゴリー・アドレス・メモ・実行ツール・インストール方法 |

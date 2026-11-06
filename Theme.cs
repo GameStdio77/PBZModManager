@@ -1062,7 +1062,21 @@ public sealed class DarkListView : ListView
 /// <summary>A message box in the dark palette; the system one cannot be themed.</summary>
 public static class DarkDialog
 {
-    public static DialogResult Show(IWin32Window? owner, string message, string title, bool yesNo = false, bool isError = false)
+    /// <summary>
+    /// Asks with buttons of its own: the first is the suggested one, the last cancels, as closing the window does.
+    /// Gives the index of the button pressed.
+    /// </summary>
+    public static int Choose(IWin32Window? owner, string message, string title, params string[] choices)
+    {
+        // Buttons take only the results Windows defines; up to six choices, each its own.
+        DialogResult[] results = { DialogResult.Yes, DialogResult.No, DialogResult.Retry, DialogResult.Ignore, DialogResult.Abort, DialogResult.OK };
+        var buttons = choices.Take(results.Length).Select((text, i) => (Text: text, Result: results[i])).ToArray();
+        var index = Array.IndexOf(results, Show(owner, message, title, buttons: buttons));
+        return index >= 0 && index < buttons.Length ? index : buttons.Length - 1;
+    }
+
+    public static DialogResult Show(IWin32Window? owner, string message, string title, bool yesNo = false, bool isError = false,
+        (string Text, DialogResult Result)[]? buttons = null)
     {
         using var form = new Form
         {
@@ -1084,7 +1098,15 @@ public static class DarkDialog
             FlowDirection = FlowDirection.RightToLeft,
         };
         Button confirm;
-        if (yesNo)
+        if (buttons is { Length: > 0 })
+        {
+            // Right to left: the last added sits leftmost, so the suggested one is added last.
+            var made = buttons.Select((b, i) => { var button = Theme.Button(b.Text, primary: i == 0); button.DialogResult = b.Result; return button; }).ToList();
+            for (int i = made.Count - 1; i >= 0; i--) bar.Controls.Add(made[i]);
+            confirm = made[0];
+            form.CancelButton = made[^1];
+        }
+        else if (yesNo)
         {
             var no = Theme.Button(L.T("아니요"));
             no.DialogResult = DialogResult.No;

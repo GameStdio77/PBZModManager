@@ -125,12 +125,13 @@ static class UiChecks
                 : url.Contains("api.github.com")
                 ? """[{"tag_name":"2.7.1","prerelease":false,"draft":false,"html_url":"https://github.com/XTGMods/UUEPBS/releases/tag/2.7.1","assets":[{"digest":"sha256:LOCALHASH"}]}]"""
                 : body.Contains("game(domainName") ? """{"data":{"game":{"id":"10614"}}}"""
-                : body.Contains("description") ? """{"data":{"legacyModsByDomain":{"nodes":[{"modCategory":{"name":"Visuals"},"description":"Installation:<br />1. Step one<br />Uninstall:<br />x"}]}}}"""
+                : body.Contains("description") ? """{"data":{"legacyModsByDomain":{"nodes":[{"modCategory":{"name":"Visuals"},"description":"STEPS"}]}}}""".Replace("STEPS", Steps)
                 : """{"data":{"legacyModsByDomain":{"nodes":[]}}}""";
             return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(json.Replace("LOCALHASH", LocalHash), Encoding.UTF8, "application/json") };
         }
 
         public string LocalHash = "";
+        public string Steps = "Installation:<br />1. Step one<br />Uninstall:<br />x";
     }
 
     static void Zip(string path, params (string Entry, string Text)[] entries)
@@ -144,6 +145,7 @@ static class UiChecks
     static Manager MakeGame(string workDir, StandIn standIn)
     {
         Manager.IgnoreGameForTests = Manager.GameRunning();
+        Manager.DeleteInsteadOfRecycleForTests = true;
         NexusApi.UseHandlerForChecks(standIn);
         var root = Path.Combine(workDir, "game");
         Directory.CreateDirectory(Path.Combine(root, "ProjectPBZ"));
@@ -164,19 +166,38 @@ static class UiChecks
     {
         var standIn = new StandIn();
         var manager = MakeGame(workDir, standIn);
-        // An option mod whose next version its author packed anew: wrapped in a folder, its options renamed.
-        var v101 = Path.Combine(manager.ModDir, "Outfit AIO 414 1.01 2026-11-04T10-23Z abc.zip");
-        var v102 = Path.Combine(manager.ModDir, "Outfit AIO 414 1.02 2026-11-06T14-04Z def.zip");
-        Zip(v101, ("Outfit-00-Body(choose one)-01-a/Outfit_Body_P.pak", "a"), ("Outfit-00-Body(choose one)-02-b/Outfit_Body_P.pak", "b"));
-        Zip(v102, ("Outfit AIO v1.02/Outfit-00-Body(choose one)-01-stockings/LogicMods/Outfit_Body_P.pak", "new a"),
-            ("Outfit AIO v1.02/Outfit-00-Body(choose one)-02-side/LogicMods/Outfit_Body_P.pak", "new b"));
-        manager.Install(manager.BuildPlan(v101, new[] { "Outfit-00-Body(choose one)-02-b" }));
+        const string v1 = "Old 1.0 501 1.0 2026-01-01T00-00Z a.zip";
         File.WriteAllText(Path.Combine(manager.StateDir, "meta.json"), System.Text.Json.JsonSerializer.Serialize(new Dictionary<string, object>
         {
-            [Path.GetFileName(v101)] = new { Registered = true },
-            [Path.GetFileName(v102)] = new { Registered = true },
+            [v1] = new { Registered = true, Url = "https://www.nexusmods.com/phantombladezero/mods/501", InstallNotes = "old steps" },
+            ["Wuchang Volice 2.zip"] = new { Registered = true, Url = "https://www.nexusmods.com/phantombladezero/mods/260" },
+            ["PBZ FemaleAnimation for 2B 385 5 2026-11-06T19-35Z a.zip"] = new { Registered = true, Url = "https://www.nexusmods.com/phantombladezero/mods/385" },
+            ["PBZ FemaleAnimation For SoulVerR 385 5 2026-11-06T19-36Z b.zip"] = new { Registered = true, Url = "https://www.nexusmods.com/phantombladezero/mods/385" },
         }));
-        var root = manager.Root;
+        Zip(Path.Combine(manager.ModDir, "PBZ FemaleAnimation for 2B 385 5 2026-11-06T19-35Z a.zip"), ("ProjectPBZ/Content/Paks/~mods/Anim_P.pak", "2b"));
+        // A main file and its optional file, as Nexus files them; the info was entered for the main one only.
+        const string aio = "SoulVerR AIO 414 1.02 2026-11-06T14-04Z a.zip", lite = "SoulVerR Lite Cloth Physics 414 1.00p1 2026-11-04T11-52Z b.zip";
+        Zip(Path.Combine(manager.ModDir, aio), ("ProjectPBZ/Content/Paks/~mods/Soul_P.pak", "s"));
+        Zip(Path.Combine(manager.ModDir, lite), ("ProjectPBZ/Content/Paks/~mods/SoulCloth_P.pak", "c"));
+        Zip(Path.Combine(manager.ModDir, "UUEPBS.zip"), ("UUEPBS/Scripts/main.lua", "lua"));
+        var metaNow = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, ModMeta>>(File.ReadAllText(Path.Combine(manager.StateDir, "meta.json")))!;
+        metaNow[aio] = new ModMeta { Registered = true, Category = "Characters", Url = "https://www.nexusmods.com/phantombladezero/mods/414" };
+        metaNow[lite] = new ModMeta { Registered = true };
+        metaNow["UUEPBS.zip"] = new ModMeta { Registered = true, Url = "https://github.com/XTGMods/UUEPBS" };
+        File.WriteAllText(Path.Combine(manager.StateDir, "meta.json"), System.Text.Json.JsonSerializer.Serialize(metaNow));
+        File.WriteAllText(Path.Combine(manager.StateDir, "remote.json"), System.Text.Json.JsonSerializer.Serialize(new Dictionary<string, RemoteInfo>
+        {
+            [ModIdentity.KeyOfZip(Path.Combine(manager.ModDir, aio))] = new() { Version = "1.02", MatchedFile = true, FileCategory = "MAIN" },
+            [ModIdentity.KeyOfZip(Path.Combine(manager.ModDir, lite))] = new() { Version = "1.00p1", MatchedFile = true, FileCategory = "OPTIONAL" },
+            [ModIdentity.KeyOfZip(Path.Combine(manager.ModDir, "UUEPBS.zip"))] = new() { Version = "2.7.1", Source = "github", LocalVersion = "2.7.1" },
+        }));
+        Zip(Path.Combine(manager.ModDir, "PBZ FemaleAnimation For SoulVerR 385 5 2026-11-06T19-36Z b.zip"), ("ProjectPBZ/Content/Paks/~mods/Anim_P.pak", "soul"));
+        Zip(Path.Combine(manager.ModDir, "Wuchang Volice 2.zip"), ("ProjectPBZ/Content/Paks/~mods/Voice_P.pak", "v"));
+        // The next version, downloaded elsewhere.
+        var v2Source = Path.Combine(workDir, "Old 2.0 501 2.0 2026-02-01T00-00Z b.zip");
+        Zip(v2Source, ("ProjectPBZ/Content/Paks/~mods/Old_P.pak", "o2"));
+        const string v2 = "Old 2.0 501 2.0 2026-02-01T00-00Z b.zip";
+        standIn.Steps = "Installation:<br />1. Steps for two";
 
         var form = new MainForm(manager, Array.Empty<string>(), _ => { })
         {
@@ -194,73 +215,126 @@ static class UiChecks
             try
             {
                 await Task.Delay(1000);
-                var zipList = All(form).OfType<DarkListView>().First();
-                foreach (ListViewItem i in zipList.Items) i.Selected = i.SubItems[0].Text.Trim() == "Outfit AIO";
+                var notes = All(form).OfType<TextBox>().First(b => b.Multiline && b.ReadOnly);
+
+                // Adding the new version: its steps are fetched for it, the old version keeps its own.
+                var adding = (Task)typeof(MainForm).GetMethod("AddZips", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                    .Invoke(form, new object[] { new[] { v2Source } })!;
+                var offer = await Window<Form>(form, f => Shows(f, "새 버전을 추가했습니다"));
+                Find(offer, "아니요").PerformClick();
+                await adding;
+                var meta = manager.LoadMeta();
+                Check("new version got the page's steps, the old one kept its own: " + meta[v2].InstallNotes.Replace("\n", " / "),
+                    meta[v2].InstallNotes == "Installation:\n1. Steps for two" && meta[v1].InstallNotes == "old steps");
+                Check("the panel shows the newest version's steps", notes.Text.Contains("Steps for two"));
+                var versions = All(form).OfType<DarkComboBox>().First(c => c.Items.Cast<object>().Any(i => i.ToString()!.StartsWith("1.0")));
+                versions.SelectedIndex = versions.Items.Cast<object>().ToList().FindIndex(i => i.ToString()!.StartsWith("1.0"));
                 await Task.Delay(300);
-                var install = All(form).OfType<Button>().First(b => b.Text.StartsWith("업데이트"));
-                install.PerformClick();
+                Check("picking the old version shows its steps: " + notes.Text, notes.Text == "old steps");
+                versions.SelectedIndex = 0;
+                await Task.Delay(300);
 
-                var ask = await Window<Form>(form, f => f.Text == "구조가 바뀐 버전");
-                Check("a version laid out anew is pointed out", Shows(ask, "구조가 달라졌습니다") && Shows(ask, "옵션 구성이 바뀌어"));
-                Find(ask, "예").PerformClick();
+                // The page changes, then the update: the steps are fetched again for the version put in.
+                standIn.Steps = "Installation:<br />1. Steps at update time";
+                All(form).OfType<Button>().First(b => b.Text.StartsWith("업데이트")).PerformClick();
+                var plan = await Window<Form>(form, f => f.Text == "업데이트 확인 - Old");
+                Find(plan, "업데이트").PerformClick();
+                await Task.Delay(1500);
+                Check("steps fetched again after the update: " + manager.LoadMeta()[v2].InstallNotes.Replace("\n", " / "),
+                    manager.LoadMeta()[v2].InstallNotes.Contains("Steps at update time") && manager.LoadMeta()[v1].InstallNotes == "old steps"
+                    && notes.Text.Contains("Steps at update time"));
 
-                var remove = await Window<Form>(form, f => f.Text == "모드 제거 확인 - Outfit AIO");
-                Find(remove, "제거").PerformClick();
-                var options = await Window<Form>(form, f => f.Text == "옵션 고르기 - Outfit AIO");
-                Check("then installed fresh, options asked", true);
-                Find(options, "다음").PerformClick();
-                var plan = await Window<Form>(form, f => f.Text == "설치 확인 - Outfit AIO");
-                Find(plan, "설치").PerformClick();
-                await Task.Delay(1000);
-
-                Check("old version removed, new one in LogicMods",
-                    !File.Exists(Path.Combine(root, "ProjectPBZ/Content/Paks/~mods/Outfit_Body_P.pak"))
-                    && File.ReadAllText(Path.Combine(root, "ProjectPBZ/Content/Paks/LogicMods/Outfit_Body_P.pak")) == "new a");
-                var mine = manager.History().Where(t => t.ZipName.StartsWith("Outfit AIO")).ToList();
-                Check("one install of the new version left: " + string.Join(", ", mine.Select(t => t.ZipName)),
-                    mine.Count == 1 && mine[0].ZipName == Path.GetFileName(v102));
-
-                // A rar put next to the work folder is added as a zip; its pictures open in their own window.
-                var rar = Directory.GetFiles(workDir, "*.rar").FirstOrDefault();
-                if (rar == null) Console.WriteLine("SKIP  rar (none given)");
-                else
+                // A mod number alone in the address becomes its page.
+                using (var dialog = new ModInfoDialog("New 1.0.zip", new ModMeta(), new List<string>(), false, _ => { }, _ => { }))
                 {
-                    // Added the way a drop on the window adds it; the info dialog for a new mod is put off.
-                    var adding = (Task)typeof(MainForm).GetMethod("AddZips", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
-                        .Invoke(form, new object[] { new[] { rar } })!;
-                    var info = await Window<ModInfoDialog>(form);
-                    Check("a new mod asks for its address first", All(info).OfType<Label>().Any(l => l.Text == "주소"));
-                    Find(info, "나중에").PerformClick();
-                    await adding;
-                    var converted = Path.Combine(manager.ModDir, Path.GetFileNameWithoutExtension(rar) + ".zip");
-                    Check("rar added as a zip of the same name, the original left where it was", File.Exists(converted) && File.Exists(rar));
-                    using (var z = System.IO.Compression.ZipFile.OpenRead(converted))
-                        Console.WriteLine($"      {z.Entries.Count} entries, options: {string.Join(" | ", manager.OptionGroups(converted).Select(g => g.Options.Count + " choices"))}");
-                    Check("the zip can be planned", manager.BuildPlan(converted).Items.Count > 0);
-                    var pictures = Manager.PicturesIn(converted);
-                    Console.WriteLine("      pictures: " + string.Join(", ", pictures.Take(6)));
-
-                    var mods = All(form).OfType<DarkListView>().First();
-                    var name = ModIdentity.ParseFileName(Path.GetFileName(converted)).Name;
-                    foreach (ListViewItem i in mods.Items) i.Selected = i.SubItems[0].Text.Contains("YoRHa");
-                    Console.WriteLine("      listed: " + string.Join(" | ", mods.Items.Cast<ListViewItem>().Select(i => i.SubItems[0].Text)) + " ; parsed name: " + name);
-                    await Task.Delay(500);
-                    var button = All(form).OfType<Button>().FirstOrDefault(b => b.Text.StartsWith("이미지 보기"));
-                    Check("picture button says how many: " + button?.Text, pictures.Count > 0 && button is { Visible: true } && button.Text == $"이미지 보기 ({pictures.Count})...");
-                    button!.PerformClick();
-                    var window = await Window<PictureWindow>(form);
-                    var first = window.Caption;
-                    window.ShowAt(1);
-                    Check("pictures turn: " + first + " → " + window.Caption, first.EndsWith($"(1/{pictures.Count})") && window.Caption.EndsWith($"(2/{Math.Max(2, pictures.Count)})") || pictures.Count == 1);
-                    var picture = All(window).OfType<PictureBox>().Single();
-                    Check("a picture is shown", picture.Image != null);
-                    using (var shot = new Bitmap(window.Width, window.Height))
-                    {
-                        window.DrawToBitmap(shot, new Rectangle(Point.Empty, window.Size));
-                        shot.Save(Path.Combine(workDir, "pictures.png"));
-                    }
-                    window.Close();
+                    dialog.ShowInTaskbar = false;
+                    dialog.Show(form);
+                    await Task.Delay(300);
+                    var editor = All(dialog).OfType<ModInfoEditor>().Single();
+                    var url = All(editor).OfType<TextBox>().First(b => !b.Multiline && b.MaxLength != 200);
+                    url.Text = "300";
+                    Check("number taken at once", editor.Url == "https://www.nexusmods.com/phantombladezero/mods/300");
+                    await Task.Delay(1500);
+                    Check("the field shows the page: " + url.Text, url.Text == "https://www.nexusmods.com/phantombladezero/mods/300");
+                    Check("and its steps came: " + editor.InstallNotes.Replace("\n", " / "), editor.InstallNotes.Contains("Steps at update time"));
+                    dialog.Close();
                 }
+
+                // A file without a version in its name: the user gives one, and the lists use it.
+                var zipList = All(form).OfType<DarkListView>().First();
+                foreach (ListViewItem i in zipList.Items) i.Selected = i.SubItems[0].Text.Trim() == "Wuchang Volice 2";
+                await Task.Delay(400);
+                var mine = All(form).OfType<TextBox>().Single(b => b.MaxLength == 40);
+                Check("version field shown for a name without a version", mine.Parent!.Parent!.Visible);
+                mine.Text = "v1.5";
+                await Task.Delay(400);
+                var row = zipList.Items.Cast<ListViewItem>().First(i => i.SubItems[0].Text.Trim() == "Wuchang Volice 2");
+                Check("saved and listed: " + row.SubItems[1].Text, manager.LoadMeta()["Wuchang Volice 2.zip"].Version == "1.5" && row.SubItems[1].Text == "(1.5)");
+                foreach (ListViewItem i in zipList.Items) i.Selected = i.SubItems[0].Text.Trim() == "Old";
+                await Task.Delay(400);
+                Check("hidden for a name with a version", !mine.Parent!.Parent!.Visible);
+
+                // Several main files of one page: a heading, the files side by side under it.
+                var texts = zipList.Items.Cast<ListViewItem>().Select(i => i.SubItems[0].Text).ToList();
+                var head = texts.IndexOf("PBZ FemaleAnimation");
+                Check("page heading with its files under it: " + string.Join(" | ", texts),
+                    head >= 0 && texts[head + 1] == "      for 2B" && texts[head + 2] == "      For SoulVerR"
+                    && zipList.Items[head].SubItems[4].Text == "파일 2개" && zipList.Items[head].Tag is PageHeading);
+                foreach (ListViewItem i in zipList.Items) i.Selected = i.Index == head;
+                await Task.Delay(300);
+                Check("the heading is not a mod: nothing to install", !All(form).OfType<Button>().First(b => b.Text.StartsWith("설치")).Enabled);
+                // The heading shows the page's shared info only, and an edit there reaches every file.
+                var pageEditor = All(form).OfType<ModInfoEditor>().Single();
+                var title = All(pageEditor).OfType<Label>().First();
+                var pageUrl = All(pageEditor).OfType<TextBox>().First(b => !b.Multiline && b.MaxLength != 200 && b.MaxLength != 40);
+                var memoBox = All(pageEditor).OfType<TextBox>().First(b => b.MaxLength == 200);
+                Check("heading shows its page: " + title.Text + " / " + pageUrl.Text, title.Text == "PBZ FemaleAnimation" && pageUrl.Text.EndsWith("/mods/385"));
+                Check("each file's own fields are hidden", !memoBox.Parent!.Visible && !All(pageEditor).OfType<DarkComboBox>().Any(c => c.Visible && c.Items.Cast<object>().Any(i => i.ToString()!.StartsWith("자동"))));
+                pageUrl.Text = "https://www.nexusmods.com/phantombladezero/mods/385?tab=description";
+                await Task.Delay(300);
+                var after = manager.LoadMeta();
+                Check("the edit reached both files", after["PBZ FemaleAnimation for 2B 385 5 2026-11-06T19-35Z a.zip"].Url.EndsWith("?tab=description")
+                    && after["PBZ FemaleAnimation For SoulVerR 385 5 2026-11-06T19-36Z b.zip"].Url.EndsWith("?tab=description"));
+                // One main file with an optional one: a tree, the main file on top.
+                var soul = texts.IndexOf("SoulVerR AIO");
+                Check("main and optional file as a tree", soul >= 0 && texts[soul + 1] == "   └ SoulVerR Lite Cloth Physics" && !texts.Contains("SoulVerR"));
+                foreach (ListViewItem i in zipList.Items) i.Selected = i.Index == soul + 1;
+                await Task.Delay(400);
+                var category = All(form).OfType<DarkComboBox>().First(c => c.Items.Contains("Characters") && !c.Items.Contains("전체"));
+                var address = All(form).OfType<TextBox>().First(b => b.Text.Contains("nexusmods.com") || b.Text.Length == 0 && !b.Multiline && b.MaxLength != 200 && b.MaxLength != 40);
+                Check("the optional file uses the page's info: " + category.SelectedItem + " / " + address.Text,
+                    (string)category.SelectedItem! == "Characters" && address.Text == "https://www.nexusmods.com/phantombladezero/mods/414");
+                foreach (ListViewItem i in zipList.Items) i.Selected = i.SubItems[0].Text.Trim() == "UUEPBS";
+                await Task.Delay(400);
+                Check("no version field when GitHub told the version", !mine.Parent!.Parent!.Visible);
+
+                foreach (ListViewItem i in zipList.Items) i.Selected = i.Index == head + 1;
+                await Task.Delay(300);
+                using (var shot = new Bitmap(form.Width, form.Height))
+                {
+                    form.DrawToBitmap(shot, new Rectangle(Point.Empty, form.Size));
+                    shot.Save(Path.Combine(workDir, "list.png"));
+                }
+
+                // Taking a mod off the list says the file stays, and offers to delete it as well.
+                async Task Unlist(string name, string choice)
+                {
+                    foreach (ListViewItem i in zipList.Items) i.Selected = i.SubItems[0].Text.Trim() == name;
+                    await Task.Delay(300);
+                    Click(Find(form, "목록에서 빼기"));
+                    var ask = await Window<Form>(form, f => f.Text == "목록에서 빼기");
+                    Check("says the file stays in .manager\\archives", Shows(ask, ".manager\\archives에 그대로 남습니다"));
+                    Find(ask, choice).PerformClick();
+                    await Task.Delay(800);
+                }
+                var voice = Path.Combine(manager.ArchiveDir, "Wuchang Volice 2.zip");
+                await Unlist("Wuchang Volice 2", "취소");
+                Check("cancel keeps it listed", zipList.Items.Cast<ListViewItem>().Any(i => i.SubItems[0].Text.Trim() == "Wuchang Volice 2"));
+                await Unlist("Wuchang Volice 2", "목록에서만 빼기");
+                Check("only off the list, the file kept", !zipList.Items.Cast<ListViewItem>().Any(i => i.SubItems[0].Text.Trim() == "Wuchang Volice 2") && File.Exists(voice));
+                var soulFile = Path.Combine(manager.ArchiveDir, "PBZ FemaleAnimation For SoulVerR 385 5 2026-11-06T19-36Z b.zip");
+                await Unlist("For SoulVerR", "파일도 휴지통으로");
+                Check("off the list and the file gone", !zipList.Items.Cast<ListViewItem>().Any(i => i.SubItems[0].Text.Trim() == "For SoulVerR") && !File.Exists(soulFile));
             }
             catch (Exception ex)
             {

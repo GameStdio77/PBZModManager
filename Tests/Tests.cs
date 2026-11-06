@@ -8,6 +8,7 @@ using System.Text.Json;
 using PBZModManager;
 
 Manager.IgnoreGameForTests = Manager.GameRunning();
+Manager.DeleteInsteadOfRecycleForTests = true;
 var work = Path.GetFullPath(args[0]);
 var realZip = args.Length > 1 ? args[1] : null;
 var extraZips = args.Skip(2).ToArray();
@@ -56,7 +57,9 @@ void Write(string root, string rel, string text)
 
 string Zip(string root, string name, params (string Path, string Text)[] entries)
 {
-    var path = Path.Combine(root, "[] MOD", name);
+    // Where the manager keeps archives.
+    Directory.CreateDirectory(Path.Combine(root, "[] MOD", ".manager", "archives"));
+    var path = Path.Combine(root, "[] MOD", ".manager", "archives", name);
     using var zip = ZipFile.Open(path, ZipArchiveMode.Create);
     foreach (var (entryPath, text) in entries)
     {
@@ -438,9 +441,15 @@ Test("only registered or installed archives are listed; adding validates and cop
     if (File.Exists(outside)) File.Delete(outside);
     using (var z = ZipFile.Open(outside, ZipArchiveMode.Create)) z.CreateEntry("outside.txt");
     var added = m.AddZip(outside);
-    Check(added == Path.Combine(m.ModDir, "outside.zip") && File.Exists(added) && File.Exists(outside), "should copy into the MOD folder");
-    Check(m.AddZip(outside) == added, "adding the same file again is fine");
+    Check(added == Path.Combine(m.ArchiveDir, "outside.zip") && File.Exists(added) && !File.Exists(outside), "moved into the archive folder");
+    Check(m.AddZip(added) == added, "adding the same file again is fine");
     Check(m.AddZip(kept) == kept, "a file already in the folder stays where it is");
+
+    // Archives an earlier version kept beside the program move in once, names unchanged.
+    var old = Path.Combine(m.ModDir, "old place.zip");
+    using (var z = ZipFile.Open(old, ZipArchiveMode.Create)) z.CreateEntry("old.txt");
+    Check(m.MoveArchivesIn() == 1 && !File.Exists(old) && File.Exists(Path.Combine(m.ArchiveDir, "old place.zip")), "old archives moved in");
+    Check(m.MoveArchivesIn() == 0, "nothing left to move");
 
     meta["outside.zip"] = new ModMeta { Registered = true };
     m.SaveMeta(meta);
@@ -616,7 +625,7 @@ Test("update: another mod's file is left alone, and a downgrade works the same w
     Check(!Exists(root, ModRoot + "extra.js"), "stale file should go");
 
     // Going back to the old archive brings its files back and removes what only 2.0 had.
-    var down = m.Install(m.BuildPlan(Path.Combine(root, "[] MOD", "M 1.0.zip")));
+    var down = m.Install(m.BuildPlan(Path.Combine(root, "[] MOD", ".manager", "archives", "M 1.0.zip")));
     Check(Read(root, ModRoot + "main.js") == "1" && Read(root, ModRoot + "extra.js") == "e", "downgrade should restore 1.0 files");
     m.RemoveOne(down.Id);
     Check(Read(root, ModRoot + "main.js") == "2" && !Exists(root, ModRoot + "extra.js"), "undoing the downgrade returns to 2.0");
@@ -1229,11 +1238,35 @@ Test("install notes: the install section of a description", _ =>
     Check(notes == "Installation:\n1. install the Mod Manager\n2.install this mod\nchoose 1 Body option", "got: " + notes.Replace("\n", " / "));
     Check(InstallNotes.Extract("Just a mod. Have fun.") == "", "no install section: nothing");
     Check(InstallNotes.Extract("[list][*]Install: drop it in[/list]<br />Credits") == "• Install: drop it in", "a short list line starts it");
+    // A description in two languages, like YoRHa 2B's: the steps in the program's language, else English, ending at a divider.
+    const string twoLanguages = "【中文说明】<br />■ 安装教程<br />[*]打开游戏目录[/*]<br />[*]启动游戏。[/*]<br />-------------------------<br />视频Video：https://v<br />【English Description】<br />Replace Soul.<br />■ Features<br />• Hair<br />■ Installation<br />1. Fully close the game.<br />4. Launch the game.";
+    Check(InstallNotes.Extract(twoLanguages) == "■ Installation\n1. Fully close the game.\n4. Launch the game.", "Korean program, no Korean steps: English ones: " + InstallNotes.Extract(twoLanguages).Replace("\n", " / "));
+    L.Use("zh");
+    Check(InstallNotes.Extract(twoLanguages) == "■ 安装教程\n• 打开游戏目录\n• 启动游戏。", "Chinese program: Chinese steps, up to the divider: " + InstallNotes.Extract(twoLanguages).Replace("\n", " / "));
+    L.Use("ko");
+    Check(NexusApi.FullAddress("300") == "https://www.nexusmods.com/phantombladezero/mods/300" && NexusApi.FullAddress(" 0300 ") == "https://www.nexusmods.com/phantombladezero/mods/300"
+        && NexusApi.FullAddress("abc") == "abc" && NexusApi.FullAddress("https://github.com/a/b") == "https://github.com/a/b", "a mod number alone is its page");
+    // A long install section, like PBZModLoader's, comes whole: 60 steps of about 90 characters each.
+    var steps = Enumerable.Range(1, 60).Select(i => $"Step {i}: put the files where the loader reads them, then start the game and check the log.");
+    var whole = InstallNotes.Extract("Installation<br />" + string.Join("<br />", steps) + "<br />Credits<br />me");
+    Check(whole.Split('\n').Length == 61 && whole.EndsWith("Step 60: put the files where the loader reads them, then start the game and check the log.") && !whole.Contains('…'),
+        $"a long section is not cut: {whole.Length} chars");
+});
+
+Test("nexus: a file's category, main or optional, from its current version", _ =>
+{
+    var files = new[]
+    {
+        new NexusFile("SoulVerR AIO", "1.01", "OLD_VERSION"), new NexusFile("SoulVerR AIO", "1.02", "MAIN"),
+        new NexusFile("SoulVerR Lite Cloth Physics", "1.00p1", "OPTIONAL"), new NexusFile("Other", "1", "MAIN"),
+    };
+    Check(NexusApi.FileCategoryOf("SoulVerR AIO", files) == "MAIN" && NexusApi.FileCategoryOf("SoulVerR Lite Cloth Physics", files) == "OPTIONAL"
+        && NexusApi.FileCategoryOf("Unknown", files) == "", "main, optional, unknown");
 });
 
 Test("install notes: live Nexus descriptions", _ =>
 {
-    foreach (var id in new[] { "414", "149", "5", "187" })
+    foreach (var id in new[] { "414", "149", "5", "187", "113", "300" })
     {
         var (category, notes) = NexusApi.GetPageInfo(new NexusLink("phantombladezero", id));
         Console.WriteLine($"      --- mod {id} [{category}] {notes.Length} chars\n" + string.Join("\n", notes.Split('\n').Select(l => "      | " + l)));
@@ -1308,7 +1341,7 @@ Test("the same file under another name is not added twice", root =>
     var outside = Path.Combine(root, "elsewhere", "Fetched 1.0 113 1.0 2026-01-02T00-00Z 9.zip");
     File.Copy(first, outside);
     Check(m.AddZip(outside) == first, "should point at the file already there");
-    Check(Directory.GetFiles(m.ModDir, "*.zip").Length == 1, "no second copy");
+    Check(Directory.GetFiles(m.ArchiveDir, "*.zip").Length == 1 && !File.Exists(outside), "no second copy, the dropped one gone");
 });
 
 Test("records from before updates existed still group and remove", root =>

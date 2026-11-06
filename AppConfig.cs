@@ -132,7 +132,7 @@ public sealed class FolderSettingsDialog : Form
             ForeColor = Theme.Muted,
             MaximumSize = new Size(620, 0),
             Margin = new Padding(0, 10, 0, 0),
-            Text = L.F("모드 보관 폴더는 이 프로그램이 있는 폴더입니다: {0}\n받은 압축 파일과 설치 기록(.manager)이 이곳에 있습니다. 다른 폴더를 쓰려면 프로그램을 그 폴더로 옮겨 실행하세요.", modDir),
+            Text = L.F("받은 모드 압축 파일과 설치 기록은 이 프로그램 옆의 .manager 폴더에 있습니다: {0}\n모드 파일은 그 안의 archives에 모입니다. .manager 폴더를 지우면 설치 기록과 모드 파일이 모두 사라지니 지우지 마세요. 다른 곳을 쓰려면 프로그램을 그 폴더로 옮겨 실행하세요.", Path.Combine(modDir, ".manager")),
         };
         body.Controls.Add(modNote, 0, 1);
         body.SetColumnSpan(modNote, 3);

@@ -452,6 +452,8 @@ public sealed class RemoteInfo
     public string PageUrl { get; set; } = "";
     /// <summary>The version of the newest local archive as the source tells it by its checksum, when its name has none.</summary>
     public string LocalVersion { get; set; } = "";
+    /// <summary>What Nexus files this mod's file under: MAIN, OPTIONAL, MISCELLANEOUS... Empty when not known.</summary>
+    public string FileCategory { get; set; } = "";
     public DateTime CheckedAt { get; set; }
 }
 
@@ -461,8 +463,9 @@ public static class InstallNotes
     /// <summary>How install steps began when they were still put into the memo.</summary>
     public const string OldMemoHeading = "[Nexus 설명의 설치 방법]";
 
-    const int MaxLines = 40;
-    const int MaxLength = 2500;
+    // Only a runaway section is cut: the section ends at the next heading anyway, and long ones are read in their own window.
+    const int MaxLines = 300;
+    const int MaxLength = 20000;
     static readonly string[] Starts = { "install", "설치", "安装", "インストール" };
     static readonly string[] NotStarts = { "uninstall", "卸载", "제거", "アンインストール" };
     static readonly string[] Stops =
@@ -492,21 +495,40 @@ public static class InstallNotes
     public static string Extract(string description)
     {
         var lines = PlainText(description).Split('\n').Select(l => l.TrimEnd()).ToList();
-        int start = lines.FindIndex(l => IsHeading(l, Starts) && !IsHeading(l, NotStarts));
-        if (start < 0) return "";
+        // Descriptions written in several languages have a section for each: the one in the program's
+        // language is taken, else the English one, else the first.
+        var headings = lines.Select((l, i) => (Line: l, Index: i)).Where(x => IsHeading(x.Line, Starts) && !IsHeading(x.Line, NotStarts)).ToList();
+        if (headings.Count == 0) return "";
+        int start = headings.OrderBy(x => LanguageOf(x.Line) == L.Current ? 0 : LanguageOf(x.Line) == "en" ? 1 : 2).ThenBy(x => x.Index).First().Index;
 
         var taken = new List<string> { lines[start].Trim() };
         for (int i = start + 1; i < lines.Count && taken.Count < MaxLines; i++)
         {
             var line = lines[i];
             // Numbered steps such as "2. install this mod" also look like headings, so only a new topic ends the section.
-            if (IsHeading(line, Stops) || line.TrimStart().StartsWith("====")) break;
+            if (IsHeading(line, Stops) || IsDivider(line)) break;
             // Descriptions often put a blank line after every line; the memo keeps them together.
             if (line.Trim().Length == 0) continue;
             taken.Add(line.Trim());
         }
         var notes = string.Join("\n", taken).Trim();
         return notes.Length > MaxLength ? notes[..MaxLength].TrimEnd() + "…" : notes;
+    }
+
+    /// <summary>A rule of dashes or equals signs, or a section title such as "【English Description】": where another part begins.</summary>
+    static bool IsDivider(string line)
+    {
+        var bare = line.Trim();
+        return System.Text.RegularExpressions.Regex.IsMatch(bare, @"^[-=_—─━~*#]{5,}") || bare.StartsWith('【');
+    }
+
+    /// <summary>The language a heading is written in, by its letters: ko, ja, zh, or en for the rest.</summary>
+    static string LanguageOf(string text)
+    {
+        if (text.Any(c => c is >= '\uAC00' and <= '\uD7A3')) return "ko";
+        if (text.Any(c => c is >= '\u3040' and <= '\u30FF')) return "ja";
+        if (text.Any(c => c is >= '\u4E00' and <= '\u9FFF')) return "zh";
+        return "en";
     }
 
     /// <summary>A short line, once list marks and numbering are dropped, that names one of the words.</summary>
@@ -536,10 +558,10 @@ public static class NexusApi
     {
         var client = handlerForChecks != null ? new HttpClient(handlerForChecks, false) : new HttpClient();
         client.Timeout = TimeSpan.FromSeconds(20);
-        client.DefaultRequestHeaders.Add("User-Agent", "PBZModManager/1.2");
+        client.DefaultRequestHeaders.Add("User-Agent", "PBZModManager/1.3");
         // Nexus's API policy asks every client to identify itself with these two.
         client.DefaultRequestHeaders.Add("Application-Name", "PBZModManager");
-        client.DefaultRequestHeaders.Add("Application-Version", "1.2.0");
+        client.DefaultRequestHeaders.Add("Application-Version", "1.3.0");
         return client;
     }
 
@@ -558,6 +580,15 @@ public static class NexusApi
     }
 
     /// <summary>Where a mod lives on Nexus: the address the user entered, or else the page number in a download's name.</summary>
+    /// <summary>A mod number typed alone, such as "300", as the full address of that mod's page; anything else as it is.</summary>
+    public static string FullAddress(string text)
+    {
+        var bare = text.Trim().TrimStart('#');
+        return bare.Length is > 0 and <= 7 && bare.All(char.IsAsciiDigit) && bare != "0"
+            ? $"https://www.nexusmods.com/{DefaultGame}/mods/{bare.TrimStart('0')}"
+            : text;
+    }
+
     public static NexusLink? LinkFor(string url, IEnumerable<string> fileNames)
     {
         var match = PageUrl.Match(url);
@@ -596,6 +627,13 @@ public static class NexusApi
                 && !f.Category.Equals("REMOVED", StringComparison.OrdinalIgnoreCase)
                 && ModIdentity.ParseFileName(f.Name + ".zip").Name.Equals(localName, StringComparison.OrdinalIgnoreCase))
             .ToList();
+
+    /// <summary>The category of this mod's current file on the page; its old versions do not count.</summary>
+    public static string FileCategoryOf(string localName, IEnumerable<NexusFile> files)
+    {
+        var current = MineOf(localName, files).Where(f => !f.Category.Equals("OLD_VERSION", StringComparison.OrdinalIgnoreCase)).ToList();
+        return current.Count > 0 ? Newest(current).Category.ToUpperInvariant() : "";
+    }
 
     static NexusFile Newest(List<NexusFile> files) =>
         files.Aggregate((a, b) => ModIdentity.CompareVersions(b.Version, a.Version) > 0 ? b : a);
@@ -681,7 +719,11 @@ public static class NexusApi
             pages.TryGetValue(modId, out var page);
             var (version, matched) = ChooseVersion(localName, files, page.Version ?? "");
             if (version.Length == 0) continue;
-            results[key] = new RemoteInfo { Version = version, MatchedFile = matched, Status = page.Status ?? "", Category = page.Category ?? "", FileId = ChooseFileId(localName, localFile, files), CheckedAt = DateTime.Now };
+            results[key] = new RemoteInfo
+            {
+                Version = version, MatchedFile = matched, Status = page.Status ?? "", Category = page.Category ?? "",
+                FileId = ChooseFileId(localName, localFile, files), FileCategory = FileCategoryOf(localName, files), CheckedAt = DateTime.Now,
+            };
         }
         return results;
     }
@@ -924,6 +966,8 @@ public sealed class ModMeta
     public string InstallNotes { get; set; } = "";
     /// <summary>The tool the mod is made for, as the user set it; empty follows what the archive holds.</summary>
     public string Tool { get; set; } = "";
+    /// <summary>The version the user gave a file whose name carries none, compared with the page's.</summary>
+    public string Version { get; set; } = "";
     /// <summary>The user added this archive to the list. Other files in the folder are not shown.</summary>
     public bool Registered { get; set; }
 
@@ -966,6 +1010,8 @@ public sealed class Manager
     public string Root { get; }
     public string ModDir { get; }
     public string StateDir { get; }
+    /// <summary>Where the mod archives are kept, inside the records: added files are moved here.</summary>
+    public string ArchiveDir { get; }
     public string LeftoversDir { get; }
     string HistoryDir { get; }
     string TmpDir { get; }
@@ -976,12 +1022,14 @@ public sealed class Manager
         Root = Path.GetFullPath(root).TrimEnd('\\', '/');
         ModDir = Path.GetFullPath(Path.Combine(Root, modDir)).TrimEnd('\\', '/');
         StateDir = Path.Combine(ModDir, ".manager");
+        ArchiveDir = Path.Combine(StateDir, "archives");
         HistoryDir = Path.Combine(StateDir, "history");
         LeftoversDir = Path.Combine(StateDir, "leftovers");
         TmpDir = Path.Combine(StateDir, "tmp");
         Directory.CreateDirectory(HistoryDir);
         Directory.CreateDirectory(LeftoversDir);
         Directory.CreateDirectory(TmpDir);
+        Directory.CreateDirectory(ArchiveDir);
         settings = LoadSettings();
         TrimLog();
     }
@@ -1147,7 +1195,7 @@ public sealed class Manager
         var found = new List<(InstalledMod, InstallPlan)>();
         foreach (var mod in ListInstalled())
         {
-            var zip = Path.Combine(ModDir, mod.ZipName);
+            var zip = Path.Combine(ArchiveDir, mod.ZipName);
             if (!File.Exists(zip)) continue;
             var plan = BuildPlan(zip);
             var moves = plan.Placements.GetValueOrDefault(Placement.MovedToLoader) + plan.Placements.GetValueOrDefault(Placement.OtherCopyLeftOut);
@@ -1164,7 +1212,7 @@ public sealed class Manager
         var names = meta.Where(p => p.Value.Registered).Select(p => p.Key).Concat(History().Select(t => t.ZipName));
         // A file that went missing stays listed, marked as such, so its notes and installs are not lost from view.
         return names.Distinct(StringComparer.OrdinalIgnoreCase)
-            .Select(name => Path.Combine(ModDir, name))
+            .Select(name => Path.Combine(ArchiveDir, name))
             .OrderBy(p => p, StringComparer.OrdinalIgnoreCase)
             .ToList();
     }
@@ -1177,15 +1225,24 @@ public sealed class Manager
     {
         if (History().Any(t => t.ZipName.Equals(fileName, StringComparison.OrdinalIgnoreCase)))
             throw new InvalidOperationException(L.F("설치된 버전의 파일은 삭제할 수 없습니다. 먼저 모드를 제거하거나 다른 버전으로 업데이트해 주세요.\n{0}", fileName));
-        var path = Path.Combine(ModDir, Path.GetFileName(fileName));
+        var path = Path.Combine(ArchiveDir, Path.GetFileName(fileName));
         if (!File.Exists(path)) return;
         if (!SendToRecycleBin(path))
             throw new IOException(L.F("파일을 휴지통으로 보내지 못했습니다: {0}", fileName));
     }
 
     /// <summary>Moves a file or folder to the Recycle Bin, without asking; true when it is gone from where it was.</summary>
+    /// <summary>Checks delete their throwaway files outright instead of filling the user's Recycle Bin.</summary>
+    public static bool DeleteInsteadOfRecycleForTests;
+
     static bool SendToRecycleBin(string path)
     {
+        if (DeleteInsteadOfRecycleForTests)
+        {
+            if (File.Exists(path)) File.Delete(path);
+            else if (Directory.Exists(path)) Directory.Delete(path, true);
+            return true;
+        }
         var op = new ShFileOp
         {
             Func = 3, // delete
@@ -1297,34 +1354,87 @@ public sealed class Manager
             throw new InvalidOperationException(L.F("올바른 zip 파일이 아닙니다: {0}", Path.GetFileName(full)));
         }
 
-        var dest = Path.Combine(ModDir, Path.GetFileName(full));
+        var dest = Path.Combine(ArchiveDir, Path.GetFileName(full));
         if (string.Equals(full, dest, StringComparison.OrdinalIgnoreCase)) return dest;
 
-        // The same file under another name, such as one fetched earlier by hand, is not added twice.
+        // The same file under another name, such as one fetched earlier by hand, is not added twice;
+        // the one dropped goes to the Recycle Bin, as it would have been moved anyway.
         var size = new FileInfo(full).Length;
         var hash = HashFile(full);
-        foreach (var existing in Directory.GetFiles(ModDir, "*.zip"))
-            if (new FileInfo(existing).Length == size && HashFile(existing) == hash) return existing;
+        foreach (var existing in Directory.GetFiles(ArchiveDir, "*.zip"))
+            if (new FileInfo(existing).Length == size && HashFile(existing) == hash)
+            {
+                SendToRecycleBin(full);
+                return existing;
+            }
 
         if (File.Exists(dest))
-        {
-            if (HashFile(dest) == HashFile(full)) return dest;
             throw new InvalidOperationException(L.F("MOD 폴더에 이름이 같은 다른 파일이 이미 있습니다: {0}", Path.GetFileName(full)));
-        }
 
-        var tmp = NewTmpPath();
-        File.Copy(full, tmp);
-        File.Move(tmp, dest);
+        MoveIn(full, dest);
         return dest;
     }
 
     /// <summary>
-    /// Writes a rar or 7z archive's files into a zip of the same name in the mod folder. A rar left in the
-    /// mod folder itself then goes to the Recycle Bin, so the folder does not hold the mod twice.
+    /// Moves a file into the archive folder. Across drives it is copied first and the original removed only
+    /// once the copy is in place; an original that cannot be removed (still open elsewhere) is left as it is.
+    /// </summary>
+    void MoveIn(string source, string dest)
+    {
+        if (string.Equals(Path.GetPathRoot(source), Path.GetPathRoot(dest), StringComparison.OrdinalIgnoreCase))
+        {
+            try
+            {
+                File.Move(source, dest);
+                return;
+            }
+            catch (IOException) when (File.Exists(source) && !File.Exists(dest))
+            {
+                // Held open by another program: copied below instead.
+            }
+        }
+        var tmp = NewTmpPath();
+        File.Copy(source, tmp);
+        File.Move(tmp, dest);
+        try { File.Delete(source); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+    }
+
+    /// <summary>
+    /// Moves archives kept in the mod folder by earlier versions into the archive folder. Names stay, so
+    /// records, notes and options carry over. Returns how many were moved.
+    /// </summary>
+    public int MoveArchivesIn(Action<string>? progress = null)
+    {
+        var found = Directory.GetFiles(ModDir, "*.zip");
+        var moved = 0;
+        foreach (var path in found)
+        {
+            progress?.Invoke(L.F("모드 파일을 .manager\\archives로 옮기는 중... {0}/{1}", moved + 1, found.Length));
+            var dest = Path.Combine(ArchiveDir, Path.GetFileName(path));
+            try
+            {
+                if (!File.Exists(dest)) MoveIn(path, dest);
+                else if (HashFile(dest) == HashFile(path)) SendToRecycleBin(path);
+                else continue;
+                moved++;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // Left where it is; tried again on the next start.
+            }
+        }
+        if (moved > 0) Log($"moved {moved} archive(s) into .manager/archives");
+        return moved;
+    }
+
+    /// <summary>
+    /// Writes a rar or 7z archive's files into a zip of the same name in the archive folder, then sends the
+    /// original to the Recycle Bin, so the mod is not kept twice.
     /// </summary>
     string AddConverted(string full, Action<string>? progress)
     {
-        var dest = Path.Combine(ModDir, Path.GetFileNameWithoutExtension(full) + ".zip");
+        var dest = Path.Combine(ArchiveDir, Path.GetFileNameWithoutExtension(full) + ".zip");
         if (!File.Exists(dest))
         {
             var tmp = NewTmpPath();
@@ -1362,8 +1472,8 @@ public sealed class Manager
                 throw new InvalidOperationException(L.F("압축 파일을 읽지 못했습니다: {0}\n{1}", Path.GetFileName(full), ex.Message), ex);
             }
         }
-        if (string.Equals(Path.GetDirectoryName(full), ModDir, StringComparison.OrdinalIgnoreCase))
-            SendToRecycleBin(full);
+        // Its files are in the zip now; the original goes to the Recycle Bin, where it can still be had back.
+        SendToRecycleBin(full);
         return dest;
     }
 

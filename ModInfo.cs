@@ -14,6 +14,13 @@ public sealed class ModInfoEditor : TableLayoutPanel
     readonly DarkComboBox toolBox = new(ComboBoxStyle.DropDownList);
     readonly TextBox urlBox = Theme.TextBox();
     readonly TextBox memoBox = Theme.TextBox();
+    /// <summary>For a file whose name has no version: the user says which it is.</summary>
+    readonly TextBox myVersionBox = Theme.TextBox();
+    readonly Label myVersionLabel = FieldLabel(L.T("내 버전"));
+    readonly Panel myVersionRow;
+    readonly Label toolLabel = FieldLabel(L.T("실행 도구"));
+    readonly Label memoLabel = FieldLabel(L.T("메모"));
+    Panel? memoField;
     readonly TextBox notesBox = Theme.TextBox(multiline: true);
     readonly Button refetchButton = Theme.Button(L.T("다시 가져오기"));
     readonly Button showNotesButton = Theme.Button(L.T("크게 보기..."));
@@ -47,10 +54,20 @@ public sealed class ModInfoEditor : TableLayoutPanel
     {
         this.addressFirst = addressFirst;
         BackColor = Theme.Background;
-        addressPause.Tick += async (_, _) => await LookUpCategory(refetch: false);
+        addressPause.Tick += async (_, _) =>
+        {
+            // A mod number alone stands for its Nexus page; the field shows the full address from then on.
+            var full = NexusApi.FullAddress(urlBox.Text);
+            if (full != urlBox.Text)
+            {
+                urlBox.Text = full;
+                urlBox.SelectionStart = full.Length;
+            }
+            await LookUpCategory(refetch: false);
+        };
         Disposed += (_, _) => addressPause.Dispose();
         ColumnCount = 2;
-        RowCount = addressFirst ? 9 : 8;
+        RowCount = addressFirst ? 10 : 9;
         Padding = new Padding(8);
         Dock = DockStyle.Fill;
         ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
@@ -87,7 +104,7 @@ public sealed class ModInfoEditor : TableLayoutPanel
             label.ForeColor = Theme.Info;
             var hint = new Label
             {
-                Text = L.T("Nexus 모드 페이지 주소를 넣으면 카테고리와 설치 방법을 자동으로 가져옵니다."),
+                Text = L.T("Nexus 모드 페이지 주소나 모드 번호(예: 300)를 넣으면 카테고리와 설치 방법을 자동으로 가져옵니다."),
                 AutoEllipsis = true,
                 Dock = DockStyle.Fill,
                 Height = Theme.BaseFont.Height + 4,
@@ -102,12 +119,34 @@ public sealed class ModInfoEditor : TableLayoutPanel
         if (addressFirst) AddAddress();
         AddVersion();
 
+        // Shown only when the file name gives no version: what is typed here is compared with the page.
+        myVersionBox.MaxLength = 40;
+        var myVersionField = Theme.Field(myVersionBox);
+        myVersionField.Dock = DockStyle.Left;
+        myVersionField.Width = 120;
+        myVersionRow = new Panel { Dock = DockStyle.Fill, Height = Theme.ControlHeight, Margin = new Padding(0, 3, 0, 3) };
+        myVersionRow.Controls.Add(new Label
+        {
+            Text = L.T("파일 이름에 버전이 없어, 적은 버전으로 최신 버전과 비교합니다"),
+            Dock = DockStyle.Fill,
+            AutoEllipsis = true,
+            ForeColor = Theme.Muted,
+            TextAlign = ContentAlignment.MiddleLeft,
+            Padding = new Padding(8, 0, 0, 0),
+        });
+        myVersionRow.Controls.Add(myVersionField);
+        Controls.Add(myVersionLabel, 0, row);
+        Controls.Add(myVersionRow, 1, row);
+        row++;
+        myVersionLabel.Visible = myVersionRow.Visible = false;
+        myVersionBox.TextChanged += (_, _) => Changed();
+
         Controls.Add(FieldLabel(L.T("카테고리")), 0, row);
         categoryBox.Dock = DockStyle.Fill;
         Controls.Add(Row(categoryBox, manageButton), 1, row);
         row++;
 
-        Controls.Add(FieldLabel(L.T("실행 도구")), 0, row);
+        Controls.Add(toolLabel, 0, row);
         toolBox.Dock = DockStyle.Fill;
         toolBox.Margin = new Padding(0, 3, 0, 3);
         Controls.Add(toolBox, 1, row);
@@ -117,9 +156,9 @@ public sealed class ModInfoEditor : TableLayoutPanel
         if (!addressFirst) AddAddress();
 
         // A short note of one line, shown in the installed list too.
-        Controls.Add(FieldLabel(L.T("메모")), 0, row);
+        Controls.Add(memoLabel, 0, row);
         memoBox.MaxLength = 200;
-        var memoField = Theme.Field(memoBox);
+        memoField = Theme.Field(memoBox);
         memoField.Dock = DockStyle.Fill;
         memoField.Margin = new Padding(0, 3, 0, 3);
         Controls.Add(memoField, 1, row);
@@ -166,14 +205,15 @@ public sealed class ModInfoEditor : TableLayoutPanel
         manageButton.Click += (_, _) => ManageRequested?.Invoke();
         openUrlButton.Click += (_, _) =>
         {
-            if (IsWebAddress(urlBox.Text))
-                Process.Start(new ProcessStartInfo(urlBox.Text.Trim()) { UseShellExecute = true });
+            if (IsWebAddress(Url))
+                Process.Start(new ProcessStartInfo(Url) { UseShellExecute = true });
         };
         openUrlButton.Enabled = false;
     }
 
     public string Category => categoryBox.SelectedItem is string s && s != Manager.NoCategory ? s : "";
-    public string Url => urlBox.Text.Trim();
+    /// <summary>The address entered; a mod number alone counts as its Nexus page.</summary>
+    public string Url => NexusApi.FullAddress(urlBox.Text.Trim());
     /// <summary>When the panel is short, the steps field folds away and its row gives the room back.</summary>
     protected override void OnLayout(LayoutEventArgs e)
     {
@@ -189,6 +229,19 @@ public sealed class ModInfoEditor : TableLayoutPanel
     }
 
     public string Memo => memoBox.Text.Trim();
+    /// <summary>The version the user typed for a file without one in its name.</summary>
+    public string MyVersion => myVersionRow.Visible ? myVersionBox.Text.Trim().TrimStart('v', 'V') : "";
+
+    /// <summary>Shows the version field when the shown file's name has no version, with what was given before.</summary>
+    public void SetMyVersion(bool needed, string value)
+    {
+        var was = loading;
+        loading = true;
+        myVersionLabel.Visible = myVersionRow.Visible = needed;
+        if (myVersionBox.Text != value) myVersionBox.Text = value;
+        myVersionBox.ReadOnly = urlBox.ReadOnly;
+        loading = was;
+    }
     public string InstallNotes => notesBox.Text.Replace("\r\n", "\n");
     /// <summary>The tool the user picked; empty while it follows what the archive holds.</summary>
     public string Tool => toolBox.SelectedIndex > 0 ? ModIdentity.Tools[toolBox.SelectedIndex - 1] : "";
@@ -206,6 +259,18 @@ public sealed class ModInfoEditor : TableLayoutPanel
         foreach (var c in choices) toolBox.Items.Add(c);
         toolBox.SelectedIndex = Math.Max(0, index);
         loading = was;
+    }
+
+    /// <summary>
+    /// For the heading of a page's files: only what the files share is shown, the category, address and
+    /// install steps; the version, tool and memo, each file's own, are hidden.
+    /// </summary>
+    public void SetPageMode(bool page)
+    {
+        foreach (var c in new Control[] { versionLabel, versionRow, toolLabel, toolBox, memoLabel, memoField! })
+            if (c.Visible == page) c.Visible = !page;
+        if (page) myVersionLabel.Visible = myVersionRow.Visible = false;
+        if (page) picturesButton.Visible = false;
     }
 
     /// <summary>Shows the version list, which only the main window uses.</summary>
@@ -255,8 +320,8 @@ public sealed class ModInfoEditor : TableLayoutPanel
         // Read-only rather than disabled: disabled text boxes ignore the dark colors.
         urlBox.ReadOnly = memoBox.ReadOnly = !editable;
         loading = false;
-        openUrlButton.Enabled = IsWebAddress(urlBox.Text);
-        refetchButton.Enabled = editable && NexusApi.LinkFor(urlBox.Text, Array.Empty<string>()) != null;
+        openUrlButton.Enabled = IsWebAddress(Url);
+        refetchButton.Enabled = editable && NexusApi.LinkFor(Url, Array.Empty<string>()) != null;
     }
 
     /// <summary>How many pictures the shown version's archive holds; none hides the button.</summary>
@@ -306,8 +371,8 @@ public sealed class ModInfoEditor : TableLayoutPanel
 
     void Changed()
     {
-        openUrlButton.Enabled = IsWebAddress(urlBox.Text);
-        refetchButton.Enabled = !urlBox.ReadOnly && NexusApi.LinkFor(urlBox.Text, Array.Empty<string>()) != null;
+        openUrlButton.Enabled = IsWebAddress(Url);
+        refetchButton.Enabled = !urlBox.ReadOnly && NexusApi.LinkFor(Url, Array.Empty<string>()) != null;
         if (!loading) Edited?.Invoke();
     }
 
@@ -479,6 +544,7 @@ public sealed class ModInfoDialog : Form
 
         editor.SetCategories(categories);
         editor.Show(zipName, note, editable: true, detectedTool);
+        editor.SetMyVersion(ModIdentity.ParseFileName(zipName).Version.Length == 0, note.Version);
         editor.ManageRequested += () =>
         {
             manageCategories(this);
@@ -518,6 +584,7 @@ public sealed class ModInfoDialog : Form
         note.Memo = editor.Memo;
         note.InstallNotes = editor.InstallNotes;
         note.Tool = editor.Tool;
+        note.Version = editor.MyVersion;
     }
 }
 

@@ -77,7 +77,7 @@ public sealed class MainForm : Form, IMessageFilter
 
         // One row, every item the control height and centred on it: the folder, then the JS loader choice, then a button.
         var header = new Panel { Dock = DockStyle.Top, Height = Theme.ControlHeight + 12, Padding = new Padding(8, 6, 8, 6) };
-        header.Controls.Add(new Label { AutoEllipsis = true, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, ForeColor = Theme.Muted, Text = L.F("게임: {0}    모드 보관: {1}", manager.Root, manager.ModDir) });
+        header.Controls.Add(new Label { AutoEllipsis = true, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, ForeColor = Theme.Muted, Text = L.F("게임: {0}    모드 보관: {1}", manager.Root, manager.ArchiveDir) });
         var runtimeLabel = new Label
         {
             Text = L.T("JS 모드 실행기"),
@@ -183,6 +183,9 @@ public sealed class MainForm : Form, IMessageFilter
             SetSplit(main, saved?.MainSplit ?? 0, main.Width / 2);
             SetSplit(zipSplit, saved?.LeftSplit ?? 0, Math.Max(200, zipSplit.Height - 330));
             SetSplit(lower, zipSplit.SplitterDistance, zipSplit.SplitterDistance);
+            // Archives earlier versions kept beside the program move into the records once.
+            if (Directory.EnumerateFiles(manager.ModDir, "*.zip").Any())
+                await Run(L.T("모드 파일 옮기는 중..."), p => manager.MoveArchivesIn(p));
             await RefreshAll();
             _ = LookForAppUpdate();
             await OfferRecovery();
@@ -190,7 +193,7 @@ public sealed class MainForm : Form, IMessageFilter
         };
         installButton.Click += async (_, _) => { await Task.Yield(); await InstallChosen(); };
         addButton.Click += async (_, _) => { await Task.Yield(); await ChooseAndAdd(); };
-        unlistButton.Click += async (_, _) => await UnlistChosen();
+        unlistButton.Click += async (_, _) => { await Task.Yield(); await UnlistChosen(); };
         deleteFileButton.Click += async (_, _) => { await Task.Yield(); await DeleteChosenFile(); };
         cleanVersionsButton.Click += async (_, _) => { await Task.Yield(); if (SelectedMod() is { } mod) await CleanOldVersions(mod); };
         removeButton.Click += async (_, _) =>
@@ -214,7 +217,7 @@ public sealed class MainForm : Form, IMessageFilter
             if (LinkOf(mod) == null && GitHubOf(mod) == null) DarkDialog.Show(this, L.T("모드 정보의 주소에 Nexus 모드 페이지나 GitHub 저장소 주소를 넣어 주세요."), Text);
             else OpenDownloadPage(mod);
         };
-        openModButton.Click += (_, _) => OpenFolder(manager.ModDir);
+        openModButton.Click += (_, _) => OpenFolder(manager.ArchiveDir);
         folderSettingsButton.Click += async (_, _) => { await Task.Yield(); ChangeFolders(); };
         launchButton.Click += async (_, _) => { await Task.Yield(); LaunchGame(); };
         languageBox.SelectionChangeCommitted += async (_, _) => { await Task.Yield(); ChangeLanguage(); };
@@ -350,6 +353,9 @@ public sealed class MainForm : Form, IMessageFilter
         }
         SaveMeta();
         await AskForInfo(asking);
+        foreach (var path in newFiles)
+            if (mods.FirstOrDefault(m => m.Versions.Any(v => v.Path == path)) is { Versions.Count: > 1 } known)
+                await RefreshNotesFor(known.Key, Path.GetFileName(path));
         await OfferUpdates(newFiles);
     }
 
@@ -426,6 +432,19 @@ public sealed class MainForm : Form, IMessageFilter
     async Task UnlistChosen()
     {
         if (ChosenVersion() is not { } version || IsInstalledFile(version.FileName)) return;
+        // The file itself is kept in the archive folder: the user is told so, and may have it go too.
+        if (!version.Missing)
+        {
+            var answer = DarkDialog.Choose(this,
+                L.F("{0}\n\n목록에서 빼도 파일은 지워지지 않고 .manager\\archives에 그대로 남습니다. 파일도 휴지통으로 보낼까요?", version.FileName),
+                L.T("목록에서 빼기"), L.T("목록에서만 빼기"), L.T("파일도 휴지통으로"), L.T("취소"));
+            if (answer == 2) return;
+            if (answer == 1)
+            {
+                await DeleteFiles(new[] { version });
+                return;
+            }
+        }
         NoteOf(version.FileName).Registered = false;
         SaveMeta();
         await RefreshAll();
@@ -492,7 +511,7 @@ public sealed class MainForm : Form, IMessageFilter
 
     // ---------------------------------------------------------------- notes and categories
 
-    ModGroup? SelectedMod() => zipList.SelectedItems.Count > 0 ? (ModGroup)zipList.SelectedItems[0].Tag! : null;
+    ModGroup? SelectedMod() => zipList.SelectedItems.Cast<ListViewItem>().Select(i => i.Tag).OfType<ModGroup>().FirstOrDefault();
 
     InstalledRow? SelectedRow() => installedList.SelectedItems.Count > 0 ? (InstalledRow)installedList.SelectedItems[0].Tag! : null;
 
@@ -512,17 +531,94 @@ public sealed class MainForm : Form, IMessageFilter
     static bool HasInfo(ModMeta m) => m.Category.Length > 0 || m.Url.Length > 0 || m.Memo.Length > 0 || m.Tool.Length > 0 || m.InstallNotes.Length > 0;
 
     /// <summary>Info belongs to the mod; it is stored per file, so any version that has it speaks for them all.</summary>
-    ModMeta MetaOf(ModGroup mod) =>
+    /// <summary>What the user noted for one mod's own files.</summary>
+    ModMeta OwnMetaOf(ModGroup mod) =>
         mod.Versions.Select(v => meta.GetValueOrDefault(v.FileName)).FirstOrDefault(m => m != null && HasInfo(m)) ?? new ModMeta();
+
+    /// <summary>The Nexus page a mod's files come from, by its address or its file names; empty when none.</summary>
+    string PageOf(ModGroup mod) =>
+        NexusApi.LinkFor(OwnMetaOf(mod).Url, mod.Versions.Select(v => v.FileName)) is { } link ? $"{link.Game}/{link.ModId}" : "";
+
+    /// <summary>Other mods from the same Nexus page: files of one page, such as a main file and its optional ones.</summary>
+    List<ModGroup> PageMates(ModGroup mod) =>
+        PageOf(mod) is { Length: > 0 } page ? mods.Where(m => m != mod && PageOf(m) == page).ToList() : new List<ModGroup>();
+
+    /// <summary>
+    /// A mod's info. The page's own things, its category, address and install steps, are shared by every file
+    /// of one page: what was entered for one is used for the others. The memo and tool stay each file's own.
+    /// </summary>
+    ModMeta MetaOf(ModGroup mod)
+    {
+        var own = OwnMetaOf(mod);
+        var mate = PageMates(mod).Select(OwnMetaOf).FirstOrDefault(m => m.Category.Length > 0 || m.Url.Length > 0);
+        if (mate == null) return own;
+        return new ModMeta
+        {
+            Category = own.Category.Length > 0 ? own.Category : mate.Category,
+            Url = own.Url.Length > 0 ? own.Url : mate.Url,
+            Memo = own.Memo, InstallNotes = own.InstallNotes, Tool = own.Tool, Registered = own.Registered,
+        };
+    }
+
+    /// <summary>
+    /// The install steps for a version. The page's description changes with new versions, so each version keeps
+    /// the steps fetched for it; one without its own shows the newest version's that has some.
+    /// </summary>
+    string NotesOf(ModGroup mod, ModVersion? version) =>
+        version != null && meta.GetValueOrDefault(version.FileName)?.InstallNotes is { Length: > 0 } own ? own
+            : mod.Versions.Concat(PageMates(mod).SelectMany(m => m.Versions))
+                .Select(v => meta.GetValueOrDefault(v.FileName)?.InstallNotes ?? "").FirstOrDefault(n => n.Length > 0) ?? "";
+
+    /// <summary>
+    /// Fetches the page's install steps again for a version, now that the page describes it: after it is added
+    /// as the newest, and after an update to it. A failed fetch keeps what was there.
+    /// </summary>
+    async Task RefreshNotesFor(string modKey, string fileName)
+    {
+        var mod = mods.FirstOrDefault(m => m.Key.Equals(modKey, StringComparison.OrdinalIgnoreCase));
+        if (mod == null || !mod.Latest.FileName.Equals(fileName, StringComparison.OrdinalIgnoreCase)
+            || NexusApi.LinkFor(MetaOf(mod).Url, Array.Empty<string>()) is not { } link) return;
+        var found = await Task.Run(() =>
+        {
+            try { return NexusApi.GetPageInfo(link).InstallNotes; }
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or InvalidOperationException
+                or System.Text.Json.JsonException or KeyNotFoundException or OverflowException) { return ""; }
+        });
+        if (found.Length == 0 || IsDisposed) return;
+        NoteOf(fileName).InstallNotes = found;
+        SaveMeta();
+        LoadNote(force: true);
+    }
 
     static string CategoryLabel(ModMeta m) => m.Category.Length > 0 ? m.Category : Manager.NoCategory;
 
     int CountMods(string category) =>
         mods.Count(m => MetaOf(m).Category.Equals(category, StringComparison.OrdinalIgnoreCase));
 
+    /// <summary>The heading line picked in the mod list, when that is what is picked.</summary>
+    PageHeading? SelectedHeading() =>
+        SelectedMod() == null ? zipList.SelectedItems.Cast<ListViewItem>().Select(i => i.Tag).OfType<PageHeading>().FirstOrDefault() : null;
+
+    /// <summary>The files under a heading.</summary>
+    List<ModGroup> FilesOf(PageHeading heading) => mods.Where(m => PageOf(m) == heading.Page).ToList();
+
     void LoadNote(bool force = false)
     {
         var mod = SelectedMod();
+        if (mod == null && SelectedHeading() is { } heading && FilesOf(heading) is { Count: > 0 } files)
+        {
+            // A page's heading shows what its files share; editing it changes them all.
+            if (!force && shownNoteFor == "page:" + heading.Page) return;
+            shownNoteFor = "page:" + heading.Page;
+            infoEditor.SetCategories(categories);
+            var shared = MetaOf(files[0]);
+            var name = SharedName(files.Select(f => f.Name).ToList());
+            infoEditor.Show(name.Length > 0 ? name : files[0].Name,
+                new ModMeta { Category = shared.Category, Url = shared.Url, InstallNotes = NotesOf(files[0], files[0].Latest) }, editable: true);
+            infoEditor.SetPageMode(true);
+            return;
+        }
+        infoEditor.SetPageMode(false);
         ShowVersions(mod);
         if (!force && mod?.Key == shownNoteFor) return;
         shownNoteFor = mod?.Key;
@@ -530,9 +626,10 @@ public sealed class MainForm : Form, IMessageFilter
         var shown = mod == null ? null : ChosenVersion() ?? mod.Latest;
         var note = mod == null ? new ModMeta() : MetaOf(mod);
         // The tool is the shown version's own, not shared across versions like the rest.
-        var view = new ModMeta { Category = note.Category, Url = note.Url, Memo = note.Memo, InstallNotes = note.InstallNotes, Registered = note.Registered, Tool = shown == null ? "" : meta.GetValueOrDefault(shown.FileName)?.Tool ?? "" };
+        var view = new ModMeta { Category = note.Category, Url = note.Url, Memo = note.Memo, InstallNotes = mod == null ? "" : NotesOf(mod, shown), Registered = note.Registered, Tool = shown == null ? "" : meta.GetValueOrDefault(shown.FileName)?.Tool ?? "" };
         infoEditor.Show(mod?.Name ?? L.T("모드를 선택하세요"), view, mod != null, shown?.Tool ?? "");
         infoEditor.SetPictureCount(shown is { Missing: false } ? Manager.PicturesIn(shown.Path).Count : 0);
+        infoEditor.SetMyVersion(mod != null && shown != null && NeedsMyVersion(mod, shown), shown == null ? "" : meta.GetValueOrDefault(shown.FileName)?.Version ?? "");
     }
 
     /// <summary>The tool a version is made for: what the user set for it, or else what its archive holds.</summary>
@@ -574,6 +671,24 @@ public sealed class MainForm : Form, IMessageFilter
 
     void NoteEdited()
     {
+        if (SelectedHeading() is { } heading)
+        {
+            // The heading's fields are the page's: every file under it takes them.
+            var files = FilesOf(heading);
+            if (files.Count == 0) return;
+            bool changed = MetaOf(files[0]).Category != infoEditor.Category || MetaOf(files[0]).Url != infoEditor.Url;
+            foreach (var version in files.SelectMany(f => f.Versions))
+            {
+                var note = NoteOf(version.FileName);
+                note.Category = infoEditor.Category;
+                note.Url = infoEditor.Url;
+            }
+            if (infoEditor.InstallNotes != NotesOf(files[0], files[0].Latest))
+                foreach (var file in files) NoteOf(file.Latest.FileName).InstallNotes = infoEditor.InstallNotes;
+            SaveMeta();
+            if (changed) RenderZips();
+            return;
+        }
         if (SelectedMod() is not { } mod) return;
 
         var shown = ChosenVersion() ?? mod.Latest;
@@ -582,16 +697,34 @@ public sealed class MainForm : Form, IMessageFilter
         bool listChanged = MetaOf(mod).Category != infoEditor.Category || toolChanged || urlChanged;
         // What Nexus said came from the old address; it no longer speaks for this mod.
         if (urlChanged && remote.Remove(mod.Key)) SaveRemoteQuietly();
+        var mates = PageMates(mod);
         foreach (var version in mod.Versions)
         {
             var note = NoteOf(version.FileName);
             note.Category = infoEditor.Category;
             note.Url = infoEditor.Url;
             note.Memo = infoEditor.Memo;
-            note.InstallNotes = infoEditor.InstallNotes;
         }
+        // The page's category and address go to its other files too.
+        foreach (var version in mates.SelectMany(m => m.Versions))
+        {
+            var note = NoteOf(version.FileName);
+            note.Category = infoEditor.Category;
+            note.Url = infoEditor.Url;
+        }
+        // Install steps are fetched for the version shown and kept with it.
+        if (infoEditor.InstallNotes != NotesOf(mod, shown)) NoteOf(shown.FileName).InstallNotes = infoEditor.InstallNotes;
         // One mod can change tools between versions, so the tool belongs to the version shown.
         NoteOf(shown.FileName).Tool = infoEditor.Tool;
+        // A version typed for a file without one changes what the lists say about it.
+        if (NeedsMyVersion(mod, shown) && NoteOf(shown.FileName).Version != infoEditor.MyVersion)
+        {
+            NoteOf(shown.FileName).Version = infoEditor.MyVersion;
+            listChanged = true;
+            foreach (ListViewItem item in installedList.Items)
+                if (item.Tag is InstalledRow { Mod: { } changed } && changed.Key.Equals(mod.Key, StringComparison.OrdinalIgnoreCase))
+                    item.SubItems[2].Text = InstalledVersionText(changed);
+        }
         // The memo also shows in the installed list.
         foreach (ListViewItem item in installedList.Items)
             if (item.Tag is InstalledRow { Mod: { } installedMod } && installedMod.Key.Equals(mod.Key, StringComparison.OrdinalIgnoreCase)
@@ -652,7 +785,13 @@ public sealed class MainForm : Form, IMessageFilter
 
     /// <summary>The newest local version: from its file name, or as the source recognised the file.</summary>
     string LocalVersionOf(ModGroup mod) =>
-        mod.Latest.Version.Length > 0 ? mod.Latest.Version : remote.TryGetValue(mod.Key, out var info) ? info.LocalVersion : "";
+        mod.Latest.Version.Length > 0 ? mod.Latest.Version
+            : remote.TryGetValue(mod.Key, out var info) && info.LocalVersion.Length > 0 ? info.LocalVersion
+            : meta.GetValueOrDefault(mod.Latest.FileName)?.Version ?? "";
+
+    /// <summary>A version shown without one in its name, and not told by GitHub's checksums: the user may give it.</summary>
+    bool NeedsMyVersion(ModGroup mod, ModVersion shown) =>
+        shown.Version.Length == 0 && !(shown == mod.Latest && remote.TryGetValue(mod.Key, out var info) && info.LocalVersion.Length > 0);
 
     static string SourceName(RemoteInfo info) => info.Source == "github" ? "GitHub" : "Nexus";
 
@@ -1022,7 +1161,7 @@ public sealed class MainForm : Form, IMessageFilter
         await InstallVersion(mod, version);
     }
 
-    List<ModGroup> SelectedMods() => zipList.SelectedItems.Cast<ListViewItem>().Select(i => (ModGroup)i.Tag!).ToList();
+    List<ModGroup> SelectedMods() => zipList.SelectedItems.Cast<ListViewItem>().Select(i => i.Tag).OfType<ModGroup>().ToList();
 
     List<InstalledMod> SelectedInstalledMods() => installedList.SelectedItems.Cast<ListViewItem>().Select(i => ((InstalledRow)i.Tag!).Mod).OfType<InstalledMod>().ToList();
 
@@ -1154,6 +1293,8 @@ public sealed class MainForm : Form, IMessageFilter
         var tx = await Run(L.F("{0} 중...", action), p => manager.Install(ready, p));
         await RefreshAll();
         if (tx != null) SetStatus(L.F("{0}{1} {2} 완료", mod.Name, Paren(version.Version), action) + (ready.Excluded.Count > 0 ? L.F(" (뺀 파일 {0}개)", ready.Excluded.Count) : ""));
+        // The page now describes the version just put in: its install steps are fetched again for it.
+        if (tx != null && action == L.T("업데이트")) await RefreshNotesFor(mod.Key, version.FileName);
     }
 
     /// <summary>" (1.0)", or nothing when the version is not known: an empty "()" says nothing.</summary>
@@ -1465,16 +1606,19 @@ public sealed class MainForm : Form, IMessageFilter
             return index >= 0 ? index : int.MaxValue;
         }
 
-        // Mods from one Nexus page stay together, the page's others indented under the first.
+        // Mods from one Nexus page stay together: a page with several files gets a heading line, its files
+        // listed under it side by side, none made to look like another's part.
         var groups = mods
             .Select(m => (Mod: m, Category: CategoryLabel(MetaOf(m)), Page: LinkOf(m) is { } link ? $"{link.Game}/{link.ModId}" : "key:" + m.Key))
             .Where(x => filter == Manager.AllCategories || x.Category.Equals(filter, StringComparison.OrdinalIgnoreCase))
             .GroupBy(x => x.Page, StringComparer.OrdinalIgnoreCase)
-            .Select(g => g.OrderBy(x => x.Mod.Name, StringComparer.OrdinalIgnoreCase).ToList())
+            // The page's main file first, so a tree hangs the others under it.
+            .Select(g => g.OrderBy(x => FileCategoryOf(x.Mod) == "MAIN" ? 0 : 1).ThenBy(x => x.Mod.Name, StringComparer.OrdinalIgnoreCase).ToList())
             .OrderBy(g => Rank(g[0].Category))
             .ThenBy(g => g[0].Mod.Name, StringComparer.OrdinalIgnoreCase);
 
-        var rows = groups.SelectMany(g => g.Select((x, index) =>
+        var rows = groups.SelectMany(g => (g.Count > 1 && !IsTree(g.Select(x => x.Mod).ToList()) ? new[] { PageHeadingRow(g.Select(x => x.Mod).ToList(), g[0].Page, g[0].Category) } : Array.Empty<ListRow>())
+            .Concat(g.Select((x, index) =>
             {
                 var status = x.Mod.InstalledFile == null ? L.T("미설치")
                     : x.Mod.UpdateAvailable ? L.T("업데이트 가능") + Change(x.Mod.InstalledVersion, x.Mod.Latest.Version)
@@ -1483,14 +1627,17 @@ public sealed class MainForm : Form, IMessageFilter
                 if (newer != null) status = L.F("{0}에 {1} 있음 · {2}", SourceName(newer), newer.Version, status);
                 var missing = x.Mod.Versions.All(v => v.Missing) ? L.T("파일 없음") : x.Mod.Versions.Any(v => v.Missing) ? L.T("일부 파일 없음") : null;
                 if (missing != null) status = $"{missing} · {status}";
-                var name = index > 0 ? "   └ " + x.Mod.Name : x.Mod.Name;
+                var tree = IsTree(g.Select(y => y.Mod).ToList());
+                var name = g.Count == 1 ? x.Mod.Name
+                    : tree ? (index == 0 ? x.Mod.Name : "   └ " + x.Mod.Name)
+                    : "      " + NameUnderHeading(x.Mod.Name, g.Select(y => y.Mod.Name).ToList());
                 var shownVersion = x.Mod.Latest.Version.Length > 0 ? x.Mod.Latest.Version : LocalVersionOf(x.Mod) is { Length: > 0 } known ? $"({known})" : "";
                 return new ListRow(new[] { name, shownVersion, x.Category, ToolOf(x.Mod.Latest), status },
                     x.Mod, missing != null ? Theme.Danger : newer != null ? Theme.Warning : x.Mod.UpdateAvailable ? Theme.Info : null);
-            })).ToList();
+            }))).ToList();
 
         zipList.SetRows(rows);
-        zipList.KeepSelection(i => ((ModGroup)i.Tag!).Key == selectedKey);
+        zipList.KeepSelection(i => i.Tag is ModGroup g && g.Key == selectedKey);
         LoadNote();
         UpdateButtons();
     }
@@ -1535,11 +1682,44 @@ public sealed class MainForm : Form, IMessageFilter
             s, s.State == L.T("변경됨") || s.State == L.T("없음") ? Theme.Danger : null)).Concat(leftOut).ToList());
     }
 
+    /// <summary>What Nexus files a mod's file under, as the last version check told it: MAIN, OPTIONAL...</summary>
+    string FileCategoryOf(ModGroup mod) => remote.TryGetValue(mod.Key, out var info) ? info.FileCategory : "";
+
+    /// <summary>
+    /// A page's files shown as a tree: one main file with the others, Nexus's optional or extra files, under it.
+    /// Several main files, or files not checked yet, get a heading with the files side by side instead.
+    /// </summary>
+    bool IsTree(IReadOnlyList<ModGroup> files) =>
+        files.Count > 1 && files.Count(f => FileCategoryOf(f) == "MAIN") == 1 && files.All(f => FileCategoryOf(f).Length > 0);
+
+    /// <summary>The words every name of a page's files starts with, such as "PBZ FemaleAnimation".</summary>
+    static string SharedName(IReadOnlyList<string> names)
+    {
+        var words = names.Select(n => n.Split(' ', StringSplitOptions.RemoveEmptyEntries)).ToList();
+        var shared = words[0].TakeWhile((w, i) => words.All(ws => ws.Length > i + 1 && ws[i] == w)).ToList();
+        return string.Join(" ", shared);
+    }
+
+    /// <summary>A file's name under its page's heading: what sets it apart, as "for 2B" for "PBZ FemaleAnimation for 2B".</summary>
+    static string NameUnderHeading(string name, IReadOnlyList<string> names)
+    {
+        var shared = SharedName(names);
+        return shared.Length > 0 && name.Length > shared.Length ? name[shared.Length..].Trim() : name;
+    }
+
+    /// <summary>The line above a page's files: their shared name, and where they come from.</summary>
+    ListRow PageHeadingRow(IReadOnlyList<ModGroup> files, string page, string category)
+    {
+        var shared = SharedName(files.Select(f => f.Name).ToList());
+        var from = L.F("파일 {0}개", files.Count);
+        return new ListRow(new[] { shared.Length > 0 ? shared : from, "", category, "", shared.Length > 0 ? from : "" }, new PageHeading(page), Theme.Info);
+    }
+
     void UpdateButtons()
     {
         var mod = SelectedMod();
         var version = ChosenVersion();
-        var many = zipList.SelectedItems.Count;
+        var many = SelectedMods().Count;
         SetEnabled(installButton, many > 1 || version is { Missing: false });
         var label = many > 1 ? L.F("{0}개 설치...", many) : (mod != null && version != null ? InstallAction(mod, version) : L.T("설치")) + "...";
         if (installButton.Text != label) installButton.Text = label;
@@ -1796,3 +1976,6 @@ public sealed class PlanDialog : Form
         }
     }
 }
+
+/// <summary>The heading line over the files of one mod page in the mod list.</summary>
+public sealed record PageHeading(string Page);
