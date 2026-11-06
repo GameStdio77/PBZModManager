@@ -99,7 +99,7 @@ public sealed class FolderSettingsDialog : Form
 
     public FolderSettingsDialog(string gameRoot, string modDir)
     {
-        Text = "폴더 설정";
+        Text = L.T("폴더 설정");
         Theme.Apply(this);
         ClientSize = new Size(660, 230);
         FormBorderStyle = FormBorderStyle.FixedDialog;
@@ -113,16 +113,16 @@ public sealed class FolderSettingsDialog : Form
         body.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         body.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         body.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        body.Controls.Add(new Label { Text = "게임 폴더", AutoSize = true, ForeColor = Theme.Muted, Anchor = AnchorStyles.Left, Margin = new Padding(0, 8, 8, 0) }, 0, 0);
+        body.Controls.Add(new Label { Text = L.T("게임 폴더"), AutoSize = true, ForeColor = Theme.Muted, Anchor = AnchorStyles.Left, Margin = new Padding(0, 8, 8, 0) }, 0, 0);
         var field = Theme.Field(gameBox);
         field.Dock = DockStyle.Fill;
         field.Margin = new Padding(0, 4, 6, 4);
         body.Controls.Add(field, 1, 0);
-        var browse = Theme.Button("찾아보기...");
+        var browse = Theme.Button(L.T("찾아보기..."));
         browse.Margin = new Padding(0, 4, 0, 4);
         browse.Click += (_, _) =>
         {
-            using var picker = new FolderBrowserDialog { Description = "Phantom Blade Zero 게임 폴더 (PBZ)", UseDescriptionForTitle = true, SelectedPath = Directory.Exists(gameBox.Text) ? gameBox.Text : "" };
+            using var picker = new FolderBrowserDialog { Description = L.T("Phantom Blade Zero 게임 폴더 (PBZ)"), UseDescriptionForTitle = true, SelectedPath = Directory.Exists(gameBox.Text) ? gameBox.Text : "" };
             if (picker.ShowDialog(this) == DialogResult.OK) gameBox.Text = picker.SelectedPath;
         };
         body.Controls.Add(browse, 2, 0);
@@ -132,15 +132,15 @@ public sealed class FolderSettingsDialog : Form
             ForeColor = Theme.Muted,
             MaximumSize = new Size(620, 0),
             Margin = new Padding(0, 10, 0, 0),
-            Text = $"모드 보관 폴더는 이 프로그램이 있는 폴더입니다: {modDir}\n받은 압축 파일과 설치 기록(.manager)이 이곳에 있습니다. 다른 폴더를 쓰려면 프로그램을 그 폴더로 옮겨 실행하세요.",
+            Text = L.F("모드 보관 폴더는 이 프로그램이 있는 폴더입니다: {0}\n받은 압축 파일과 설치 기록(.manager)이 이곳에 있습니다. 다른 폴더를 쓰려면 프로그램을 그 폴더로 옮겨 실행하세요.", modDir),
         };
         body.Controls.Add(modNote, 0, 1);
         body.SetColumnSpan(modNote, 3);
         body.Controls.Add(status, 0, 2);
         body.SetColumnSpan(status, 3);
 
-        var ok = Theme.Button("저장", primary: true);
-        var cancel = Theme.Button("취소");
+        var ok = Theme.Button(L.T("저장"), primary: true);
+        var cancel = Theme.Button(L.T("취소"));
         cancel.DialogResult = DialogResult.Cancel;
         CancelButton = cancel;
         var bar = new FlowLayoutPanel { Dock = DockStyle.Bottom, AutoSize = true, FlowDirection = FlowDirection.RightToLeft, Padding = new Padding(8) };
@@ -154,7 +154,7 @@ public sealed class FolderSettingsDialog : Form
             if (!GameFolder.IsGameFolder(GameRoot))
             {
                 status.ForeColor = Theme.Danger;
-                status.Text = "게임 폴더가 아닙니다. ProjectPBZ와 platform 폴더가 있는 PBZ 폴더를 골라 주세요.";
+                status.Text = L.T("게임 폴더가 아닙니다. ProjectPBZ와 platform 폴더가 있는 PBZ 폴더를 골라 주세요.");
                 return;
             }
             DialogResult = DialogResult.OK;

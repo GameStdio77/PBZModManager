@@ -7,24 +7,25 @@ public sealed class ModInfoEditor : TableLayoutPanel
 {
     readonly Label title = new() { AutoEllipsis = true, Dock = DockStyle.Fill, ForeColor = Theme.Muted, TextAlign = ContentAlignment.MiddleLeft, Height = 22 };
     readonly DarkComboBox versionBox = new(ComboBoxStyle.DropDownList);
-    readonly Label versionLabel = FieldLabel("버전");
-    readonly Button downloadButton = Theme.Button("다운로드 페이지");
+    readonly Label versionLabel = FieldLabel(L.T("버전"));
+    readonly Button downloadButton = Theme.Button(L.T("다운로드 페이지"));
     readonly Panel versionRow;
     readonly DarkComboBox categoryBox = new(ComboBoxStyle.DropDownList);
     readonly DarkComboBox toolBox = new(ComboBoxStyle.DropDownList);
     readonly TextBox urlBox = Theme.TextBox();
     readonly TextBox memoBox = Theme.TextBox();
     readonly TextBox notesBox = Theme.TextBox(multiline: true);
-    readonly Button refetchButton = Theme.Button("다시 가져오기");
-    readonly Button showNotesButton = Theme.Button("크게 보기...");
+    readonly Button refetchButton = Theme.Button(L.T("다시 가져오기"));
+    readonly Button showNotesButton = Theme.Button(L.T("크게 보기..."));
     readonly Panel notesField;
     /// <summary>Below this height the steps are not worth showing inline; the button opens them in a window.</summary>
     const int NotesMinHeight = 70;
-    readonly Button manageButton = Theme.Button("관리...");
-    readonly Button openUrlButton = Theme.Button("열기");
+    readonly Button manageButton = Theme.Button(L.T("관리..."));
+    readonly Button openUrlButton = Theme.Button(L.T("열기"));
     // Waits for typing to stop, so Nexus is asked about a finished address and not about every keystroke.
     readonly System.Windows.Forms.Timer addressPause = new() { Interval = 700 };
     bool loading;
+    readonly bool addressFirst;
 
     /// <summary>The user changed a field. Loading values through <see cref="Show"/> does not raise this.</summary>
     public event Action? Edited;
@@ -35,68 +36,107 @@ public sealed class ModInfoEditor : TableLayoutPanel
     /// <summary>An entered address gave a category, and none was chosen. Gives its name.</summary>
     public event Action<string>? CategoryFound;
 
-    public ModInfoEditor()
+    /// <param name="addressFirst">
+    /// For a mod just added: the address comes first and stands out, since it fills in the category and
+    /// install steps by itself.
+    /// </param>
+    public ModInfoEditor(bool addressFirst = false)
     {
+        this.addressFirst = addressFirst;
         BackColor = Theme.Background;
         addressPause.Tick += async (_, _) => await LookUpCategory(refetch: false);
         Disposed += (_, _) => addressPause.Dispose();
         ColumnCount = 2;
-        RowCount = 8;
+        RowCount = addressFirst ? 9 : 8;
         Padding = new Padding(8);
         Dock = DockStyle.Fill;
         ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        for (int i = 0; i < 7; i++) RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        for (int i = 0; i < RowCount - 1; i++) RowStyles.Add(new RowStyle(SizeType.AutoSize));
         RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
-        Controls.Add(title, 0, 0);
+        int row = 0;
+        Controls.Add(title, 0, row);
         SetColumnSpan(title, 2);
+        row++;
 
-        Controls.Add(versionLabel, 0, 1);
         versionBox.Dock = DockStyle.Fill;
         versionRow = Row(versionBox, downloadButton);
-        Controls.Add(versionRow, 1, 1);
         versionLabel.Visible = versionRow.Visible = false;
         downloadButton.Click += (_, _) => DownloadRequested?.Invoke();
+        void AddVersion()
+        {
+            Controls.Add(versionLabel, 0, row);
+            Controls.Add(versionRow, 1, row);
+            row++;
+        }
 
-        Controls.Add(FieldLabel("카테고리"), 0, 2);
+        void AddAddress()
+        {
+            var label = FieldLabel(L.T("주소"));
+            var urlField = Theme.Field(urlBox);
+            urlField.Dock = DockStyle.Fill;
+            Controls.Add(label, 0, row);
+            Controls.Add(Row(urlField, openUrlButton), 1, row);
+            row++;
+            if (!addressFirst) return;
+            label.Font = Theme.TitleFont;
+            label.ForeColor = Theme.Info;
+            var hint = new Label
+            {
+                Text = L.T("Nexus 모드 페이지 주소를 넣으면 카테고리와 설치 방법을 자동으로 가져옵니다."),
+                AutoEllipsis = true,
+                Dock = DockStyle.Fill,
+                Height = Theme.BaseFont.Height + 4,
+                ForeColor = Theme.Info,
+                Margin = new Padding(0, 0, 0, 8),
+            };
+            new ToolTip().SetToolTip(hint, hint.Text);
+            Controls.Add(hint, 1, row);
+            row++;
+        }
+
+        if (addressFirst) AddAddress();
+        AddVersion();
+
+        Controls.Add(FieldLabel(L.T("카테고리")), 0, row);
         categoryBox.Dock = DockStyle.Fill;
-        Controls.Add(Row(categoryBox, manageButton), 1, 2);
+        Controls.Add(Row(categoryBox, manageButton), 1, row);
+        row++;
 
-        Controls.Add(FieldLabel("실행 도구"), 0, 3);
+        Controls.Add(FieldLabel(L.T("실행 도구")), 0, row);
         toolBox.Dock = DockStyle.Fill;
         toolBox.Margin = new Padding(0, 3, 0, 3);
-        Controls.Add(toolBox, 1, 3);
+        Controls.Add(toolBox, 1, row);
         SetTools("");
+        row++;
 
-        Controls.Add(FieldLabel("주소"), 0, 4);
-        var urlField = Theme.Field(urlBox);
-        urlField.Dock = DockStyle.Fill;
-        Controls.Add(Row(urlField, openUrlButton), 1, 4);
+        if (!addressFirst) AddAddress();
 
         // A short note of one line, shown in the installed list too.
-        Controls.Add(FieldLabel("메모"), 0, 5);
+        Controls.Add(FieldLabel(L.T("메모")), 0, row);
         memoBox.MaxLength = 200;
         var memoField = Theme.Field(memoBox);
         memoField.Dock = DockStyle.Fill;
         memoField.Margin = new Padding(0, 3, 0, 3);
-        Controls.Add(memoField, 1, 5);
+        Controls.Add(memoField, 1, row);
+        row++;
 
         // Install steps come from the mod's page; they are read here, not typed.
         var notesHeader = new Panel { Dock = DockStyle.Fill, Height = Theme.ControlHeight, Margin = new Padding(0, 6, 0, 2) };
         refetchButton.Dock = DockStyle.Right;
         showNotesButton.Dock = DockStyle.Right;
-        notesHeader.Controls.Add(new Label { Text = "설치 방법 (Nexus 설명에서 가져옴)", AutoSize = true, ForeColor = Theme.Muted, Dock = DockStyle.Left, Padding = new Padding(0, 6, 0, 0) });
+        notesHeader.Controls.Add(new Label { Text = L.T("설치 방법 (Nexus 설명에서 가져옴)"), AutoSize = true, ForeColor = Theme.Muted, Dock = DockStyle.Left, Padding = new Padding(0, 6, 0, 0) });
         notesHeader.Controls.Add(showNotesButton);
         notesHeader.Controls.Add(new Panel { Dock = DockStyle.Right, Width = 6 });
         notesHeader.Controls.Add(refetchButton);
-        Controls.Add(notesHeader, 0, 6);
+        Controls.Add(notesHeader, 0, row++);
         SetColumnSpan(notesHeader, 2);
         notesBox.ReadOnly = true;
         notesField = Theme.MemoField(notesBox);
         notesField.Dock = DockStyle.Fill;
         notesField.Margin = new Padding(0, 2, 0, 0);
-        Controls.Add(notesField, 0, 7);
+        Controls.Add(notesField, 0, row);
         SetColumnSpan(notesField, 2);
         refetchButton.Click += async (_, _) => await LookUpCategory(refetch: true);
         showNotesButton.Click += async (_, _) => { await Task.Yield(); NotesWindow.Show(FindForm(), title.Text, notesBox.Text); };
@@ -132,24 +172,24 @@ public sealed class ModInfoEditor : TableLayoutPanel
         base.OnLayout(e);
         if (notesField == null) return;
         var heights = GetRowHeights();
-        if (heights.Length < 8) return;
-        int above = heights.Take(7).Sum() + Padding.Vertical;
+        if (heights.Length < RowCount) return;
+        int above = heights.Take(RowCount - 1).Sum() + Padding.Vertical;
         bool fits = ClientSize.Height - above >= NotesMinHeight;
         if (notesField.Visible != fits) notesField.Visible = fits;
-        var label = fits ? "크게 보기..." : "설치 방법 보기...";
+        var label = fits ? L.T("크게 보기...") : L.T("설치 방법 보기...");
         if (showNotesButton.Text != label) showNotesButton.Text = label;
     }
 
     public string Memo => memoBox.Text.Trim();
     public string InstallNotes => notesBox.Text.Replace("\r\n", "\n");
     /// <summary>The tool the user picked; empty while it follows what the archive holds.</summary>
-    public string Tool => toolBox.SelectedIndex > 0 ? (string)toolBox.Items[toolBox.SelectedIndex]! : "";
+    public string Tool => toolBox.SelectedIndex > 0 ? ModIdentity.Tools[toolBox.SelectedIndex - 1] : "";
 
     /// <summary>The first entry follows the archive's contents and names what they say.</summary>
     void SetTools(string detected)
     {
-        var first = detected.Length > 0 ? $"자동 ({detected})" : "자동 (알 수 없음)";
-        var choices = new[] { first }.Concat(ModIdentity.Tools).ToList();
+        var first = detected.Length > 0 ? L.F("자동 ({0})", ModIdentity.ToolLabel(detected)) : L.T("자동 (알 수 없음)");
+        var choices = new[] { first }.Concat(ModIdentity.Tools.Select(ModIdentity.ToolLabel)).ToList();
         if (toolBox.Items.Cast<string>().SequenceEqual(choices)) return;
         var index = toolBox.SelectedIndex;
         var was = loading;
@@ -211,7 +251,11 @@ public sealed class ModInfoEditor : TableLayoutPanel
         refetchButton.Enabled = editable && NexusApi.LinkFor(urlBox.Text, Array.Empty<string>()) != null;
     }
 
-    public void FocusFirstField() => categoryBox.Select();
+    public void FocusFirstField()
+    {
+        if (addressFirst) urlBox.Select();
+        else categoryBox.Select();
+    }
 
     /// <summary>Chooses a category as if the user had, so it is saved the same way.</summary>
     public void SelectCategory(string category) => categoryBox.SelectedItem = category;
@@ -276,7 +320,7 @@ public static class NotesWindow
     {
         using var form = new Form
         {
-            Text = $"설치 방법 - {modName}",
+            Text = L.F("설치 방법 - {0}", modName),
             ClientSize = new Size(680, 520),
             MinimumSize = new Size(420, 300),
             StartPosition = FormStartPosition.CenterParent,
@@ -286,12 +330,12 @@ public static class NotesWindow
         Theme.Apply(form);
         var box = Theme.TextBox(multiline: true);
         box.ReadOnly = true;
-        box.Text = notes.Length > 0 ? notes : "가져온 설치 방법이 없습니다. 주소에 Nexus 모드 페이지를 넣으면 가져옵니다.";
+        box.Text = notes.Length > 0 ? notes : L.T("가져온 설치 방법이 없습니다. 주소에 Nexus 모드 페이지를 넣으면 가져옵니다.");
         var field = Theme.MemoField(box);
         field.Dock = DockStyle.Fill;
         var body = new Panel { Dock = DockStyle.Fill, Padding = new Padding(12) };
         body.Controls.Add(field);
-        var close = Theme.Button("닫기", primary: true);
+        var close = Theme.Button(L.T("닫기"), primary: true);
         close.DialogResult = DialogResult.OK;
         form.AcceptButton = close;
         form.CancelButton = close;
@@ -309,13 +353,13 @@ public sealed class ModInfoDialog : Form
 {
     public const DialogResult SkipAll = DialogResult.Abort;
 
-    readonly ModInfoEditor editor = new();
+    readonly ModInfoEditor editor = new(addressFirst: true);
 
     public ModInfoDialog(string zipName, ModMeta note, IReadOnlyList<string> categories, bool moreToCome, Action<IWin32Window> manageCategories, Action<string> rememberCategory, string detectedTool = "")
     {
-        Text = "모드 정보 입력";
+        Text = L.T("모드 정보 입력");
         Theme.Apply(this);
-        ClientSize = new Size(560, 520);
+        ClientSize = new Size(640, 540);
         MinimumSize = new Size(440, 340);
         StartPosition = FormStartPosition.CenterParent;
         ShowInTaskbar = false;
@@ -335,14 +379,14 @@ public sealed class ModInfoDialog : Form
             editor.SelectCategory(category);
         };
 
-        var save = Theme.Button("저장", primary: true);
+        var save = Theme.Button(L.T("저장"), primary: true);
         save.DialogResult = DialogResult.OK;
-        var later = Theme.Button("나중에");
+        var later = Theme.Button(L.T("나중에"));
         later.DialogResult = DialogResult.Cancel;
         var bar = new FlowLayoutPanel { Dock = DockStyle.Bottom, AutoSize = true, FlowDirection = FlowDirection.RightToLeft, Padding = new Padding(8) };
         if (moreToCome)
         {
-            var skipAll = Theme.Button("모두 나중에");
+            var skipAll = Theme.Button(L.T("모두 나중에"));
             skipAll.DialogResult = SkipAll;
             bar.Controls.Add(skipAll);
         }
@@ -372,7 +416,7 @@ public sealed class CategoryDialog : Form
     readonly List<string> categories;
     readonly Action save;
     readonly Func<string, int> countMods;
-    readonly DarkListView list = new(0, ("카테고리", 240), ("모드 수", 70));
+    readonly DarkListView list = new(0, (L.T("카테고리"), 240), (L.T("모드 수"), 70));
 
     public CategoryDialog(Dictionary<string, ModMeta> meta, List<string> categories, Action save, Func<string, int> countMods)
     {
@@ -381,7 +425,7 @@ public sealed class CategoryDialog : Form
         this.save = save;
         this.countMods = countMods;
 
-        Text = "카테고리 관리";
+        Text = L.T("카테고리 관리");
         Theme.Apply(this);
         ClientSize = new Size(480, 420);
         MinimumSize = new Size(440, 320);
@@ -394,12 +438,12 @@ public sealed class CategoryDialog : Form
         var body = new Panel { Dock = DockStyle.Fill, Padding = new Padding(10, 10, 6, 10) };
         body.Controls.Add(frame);
 
-        var add = Theme.Button("추가...", primary: true);
-        var rename = Theme.Button("이름 변경...");
-        var delete = Theme.Button("삭제...");
-        var up = Theme.Button("위로");
-        var down = Theme.Button("아래로");
-        var close = Theme.Button("닫기");
+        var add = Theme.Button(L.T("추가..."), primary: true);
+        var rename = Theme.Button(L.T("이름 변경..."));
+        var delete = Theme.Button(L.T("삭제..."));
+        var up = Theme.Button(L.T("위로"));
+        var down = Theme.Button(L.T("아래로"));
+        var close = Theme.Button(L.T("닫기"));
         close.DialogResult = DialogResult.Cancel;
         CancelButton = close;
 
@@ -444,7 +488,7 @@ public sealed class CategoryDialog : Form
 
     void Add()
     {
-        var name = AskName("새 카테고리", "카테고리 이름", "", null);
+        var name = AskName(L.T("새 카테고리"), L.T("카테고리 이름"), "", null);
         if (name == null) return;
         categories.Add(name);
         save();
@@ -454,7 +498,7 @@ public sealed class CategoryDialog : Form
     void Rename()
     {
         if (Selected is not { } old) return;
-        var name = AskName("카테고리 이름 변경", "새 이름", old, old);
+        var name = AskName(L.T("카테고리 이름 변경"), L.T("새 이름"), old, old);
         if (name == null || name == old) return;
         Manager.RenameCategory(meta, categories, old, name);
         save();
@@ -466,8 +510,8 @@ public sealed class CategoryDialog : Form
         if (Selected is not { } name) return;
         int used = countMods(name);
         var message = used > 0
-            ? $"'{name}' 카테고리를 삭제할까요?\n이 카테고리의 모드 {used}개는 미분류가 됩니다. 모드는 지워지지 않습니다."
-            : $"'{name}' 카테고리를 삭제할까요?";
+            ? L.F("'{0}' 카테고리를 삭제할까요?\n이 카테고리의 모드 {1}개는 미분류가 됩니다. 모드는 지워지지 않습니다.", name, used)
+            : L.F("'{0}' 카테고리를 삭제할까요?", name);
         if (DarkDialog.Show(this, message, Text, yesNo: true) != DialogResult.Yes) return;
         Manager.DeleteCategory(meta, categories, name);
         save();
@@ -526,9 +570,9 @@ public static class DarkPrompt
         body.Controls.Add(field);
         body.Controls.Add(caption);
 
-        var ok = Theme.Button("확인", primary: true);
+        var ok = Theme.Button(L.T("확인"), primary: true);
         ok.DialogResult = DialogResult.OK;
-        var cancel = Theme.Button("취소");
+        var cancel = Theme.Button(L.T("취소"));
         cancel.DialogResult = DialogResult.Cancel;
         var bar = new FlowLayoutPanel { Dock = DockStyle.Bottom, AutoSize = true, FlowDirection = FlowDirection.RightToLeft, Padding = new Padding(8) };
         bar.Controls.Add(cancel);
@@ -552,14 +596,14 @@ public sealed class OptionsDialog : Form
 {
     readonly List<(OptionGroup Group, DarkComboBox Box)> rows = new();
 
-    const string NotInstalled = "(설치 안 함)";
+    static string NotInstalled => L.T("(설치 안 함)");
 
     /// <summary>The picked folder of each set; a set left at "not installed" adds none.</summary>
     public List<string> Chosen => rows.Where(r => r.Box.SelectedIndex > 0).Select(r => r.Group.Options[r.Box.SelectedIndex - 1].Folder).ToList();
 
     public OptionsDialog(string modName, IReadOnlyList<OptionGroup> groups, IReadOnlyCollection<string> previous)
     {
-        Text = $"옵션 고르기 - {modName}";
+        Text = L.F("옵션 고르기 - {0}", modName);
         Theme.Apply(this);
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
@@ -575,7 +619,7 @@ public sealed class OptionsDialog : Form
             AutoSize = true,
             MaximumSize = new Size(520, 0),
             Margin = new Padding(0, 0, 0, 10),
-            Text = "이 모드에는 같은 파일을 쓰는 옵션이 있어 묶음마다 하나만 설치할 수 있습니다. 필요 없는 묶음은 '설치 안 함'으로 두세요.\n다른 옵션으로 바꾸려면 나중에 재설치하면서 다시 고르면 됩니다.",
+            Text = L.T("이 모드에는 같은 파일을 쓰는 옵션이 있어 묶음마다 하나만 설치할 수 있습니다. 필요 없는 묶음은 '설치 안 함'으로 두세요.\n다른 옵션으로 바꾸려면 나중에 재설치하면서 다시 고르면 됩니다."),
         });
 
         for (int i = 0; i < groups.Count; i++)
@@ -587,7 +631,7 @@ public sealed class OptionsDialog : Form
                 MaximumSize = new Size(520, 0),
                 ForeColor = Theme.Muted,
                 Margin = new Padding(0, 6, 0, 3),
-                Text = $"옵션 {i + 1} ({group.Options.Count}개 중 하나) · 겹치는 파일: {string.Join(", ", group.SharedFiles.Take(3))}{(group.SharedFiles.Count > 3 ? " 외" : "")}",
+                Text = L.F("옵션 {0} ({1}개 중 하나) · 겹치는 파일: {2}{3}", i + 1, group.Options.Count, string.Join(", ", group.SharedFiles.Take(3)), (group.SharedFiles.Count > 3 ? L.T(" 외") : "")),
             });
             var box = new DarkComboBox(ComboBoxStyle.DropDownList) { Width = 520, Margin = new Padding(0, 0, 0, 4) };
             box.Items.Add(NotInstalled);
@@ -599,9 +643,9 @@ public sealed class OptionsDialog : Form
             rows.Add((group, box));
         }
 
-        var ok = Theme.Button("다음", primary: true);
+        var ok = Theme.Button(L.T("다음"), primary: true);
         ok.DialogResult = DialogResult.OK;
-        var cancel = Theme.Button("취소");
+        var cancel = Theme.Button(L.T("취소"));
         cancel.DialogResult = DialogResult.Cancel;
         AcceptButton = ok;
         CancelButton = cancel;

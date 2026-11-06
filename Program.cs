@@ -5,12 +5,14 @@ namespace PBZModManager;
 
 static class Program
 {
-    const string Title = "PBZ 모드 매니저";
+    static string Title => L.T("PBZ 모드 매니저");
 
     [STAThread]
     static int Main(string[] args)
     {
         ApplicationConfiguration.Initialize();
+        // The language comes first: every window and the fonts are made in it.
+        L.Use(Manager.SavedLanguage(GameFolder.ModDir));
         Theme.UseDarkSystemMenus();
         RemoveReplacedExe();
         Application.ThreadException += (_, e) => DarkDialog.Show(null, e.Exception.Message, Title, isError: true);
@@ -31,7 +33,7 @@ static class Program
         catch (AbandonedMutexException) { owned = true; }
         if (!owned)
         {
-            DarkDialog.Show(null, "모드 매니저가 이미 실행 중입니다.", Title);
+            DarkDialog.Show(null, L.T("모드 매니저가 이미 실행 중입니다."), Title);
             return 1;
         }
 
@@ -48,13 +50,13 @@ static class Program
     /// <summary>Asks for the game folder when it could not be found; null when the user gives up.</summary>
     static string? AskForGame()
     {
-        DarkDialog.Show(null, "Phantom Blade Zero 게임 폴더를 찾지 못했습니다.\n다음 창에서 PBZ 폴더(ProjectPBZ와 platform 폴더가 있는 곳)를 골라 주세요.", Title);
+        DarkDialog.Show(null, L.T("Phantom Blade Zero 게임 폴더를 찾지 못했습니다.\n다음 창에서 PBZ 폴더(ProjectPBZ와 platform 폴더가 있는 곳)를 골라 주세요."), Title);
         while (true)
         {
-            using var picker = new FolderBrowserDialog { Description = "Phantom Blade Zero 게임 폴더 (PBZ)", UseDescriptionForTitle = true };
+            using var picker = new FolderBrowserDialog { Description = L.T("Phantom Blade Zero 게임 폴더 (PBZ)"), UseDescriptionForTitle = true };
             if (picker.ShowDialog() != DialogResult.OK) return null;
             if (GameFolder.IsGameFolder(picker.SelectedPath)) return Path.GetFullPath(picker.SelectedPath);
-            DarkDialog.Show(null, "게임 폴더가 아닙니다. ProjectPBZ와 platform 폴더가 있는 PBZ 폴더를 골라 주세요.", Title, isError: true);
+            DarkDialog.Show(null, L.T("게임 폴더가 아닙니다. ProjectPBZ와 platform 폴더가 있는 PBZ 폴더를 골라 주세요."), Title, isError: true);
         }
     }
 

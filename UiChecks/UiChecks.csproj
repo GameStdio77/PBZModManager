@@ -9,6 +9,8 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="..\Core.cs" Link="Core.cs" />
+    <Compile Include="..\Lang.cs" Link="Lang.cs" />
+    <Compile Include="..\LangTable.cs" Link="LangTable.cs" />
     <Compile Include="..\Theme.cs" Link="Theme.cs" />
     <Compile Include="..\ModInfo.cs" Link="ModInfo.cs" />
     <Compile Include="..\MainForm.cs" Link="MainForm.cs" />

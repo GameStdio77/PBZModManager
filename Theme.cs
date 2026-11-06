@@ -24,8 +24,11 @@ public static class Theme
     public static readonly Color Dim = Color.FromArgb(124, 129, 141);
     public static readonly Color Disabled = Color.FromArgb(134, 139, 151);
 
-    public static readonly Font BaseFont = new("Malgun Gothic", 9f);
-    public static readonly Font TitleFont = new("Malgun Gothic", 9f, FontStyle.Bold);
+    // Each language in a font that has all its letters; made on first use, after the language is chosen.
+    static Font? baseFont, titleFont;
+    static string FontName => L.Current switch { "zh" => "Microsoft YaHei UI", "ja" => "Yu Gothic UI", "en" => "Segoe UI", _ => "Malgun Gothic" };
+    public static Font BaseFont => baseFont ??= new(FontName, 9f);
+    public static Font TitleFont => titleFont ??= new(FontName, 9f, FontStyle.Bold);
 
     /// <summary>The height of every single-line control, so buttons, fields and dropdowns line up.</summary>
     public static int ControlHeight => BaseFont.Height + 13;
@@ -167,7 +170,7 @@ public sealed class ButtonBar : Panel
     const int Gap = 6;
     readonly Control[] buttons;
     readonly Control[] right;
-    readonly DarkButton more = new("더 보기 ▾", primary: false);
+    readonly DarkButton more = new(L.T("더 보기 ▾"), primary: false);
     readonly ContextMenuStrip menu = new() { Renderer = new DarkMenuRenderer(), ShowImageMargin = false, BackColor = Theme.Surface, ForeColor = Theme.Text };
 
     public ButtonBar(Control[] buttons, Control[] right)
@@ -1083,9 +1086,9 @@ public static class DarkDialog
         Button confirm;
         if (yesNo)
         {
-            var no = Theme.Button("아니요");
+            var no = Theme.Button(L.T("아니요"));
             no.DialogResult = DialogResult.No;
-            confirm = Theme.Button("예", primary: true);
+            confirm = Theme.Button(L.T("예"), primary: true);
             confirm.DialogResult = DialogResult.Yes;
             bar.Controls.Add(no);
             bar.Controls.Add(confirm);
@@ -1093,7 +1096,7 @@ public static class DarkDialog
         }
         else
         {
-            confirm = Theme.Button("확인", primary: true);
+            confirm = Theme.Button(L.T("확인"), primary: true);
             confirm.DialogResult = DialogResult.OK;
             bar.Controls.Add(confirm);
             form.CancelButton = confirm;

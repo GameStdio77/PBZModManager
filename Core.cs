@@ -320,6 +320,9 @@ public static class ModIdentity
         "PBZModLoader 본체", "Mods Menu 본체", "UE4SS 본체", "기타",
     };
 
+    /// <summary>A tool name as shown: the stored names are Korean, and each part is shown in the current language.</summary>
+    public static string ToolLabel(string tool) => string.Join(" · ", tool.Split(" · ").Select(L.T));
+
     /// <summary>What an archive's contents say it is made for, such as "UE4SS" or "Mods Menu"; empty when they do not say.</summary>
     public static string ToolOf(IReadOnlyCollection<string> paths)
     {
@@ -510,10 +513,10 @@ public static class NexusApi
     {
         var client = handlerForChecks != null ? new HttpClient(handlerForChecks, false) : new HttpClient();
         client.Timeout = TimeSpan.FromSeconds(20);
-        client.DefaultRequestHeaders.Add("User-Agent", "PBZModManager/1.0");
+        client.DefaultRequestHeaders.Add("User-Agent", "PBZModManager/1.1");
         // Nexus's API policy asks every client to identify itself with these two.
         client.DefaultRequestHeaders.Add("Application-Name", "PBZModManager");
-        client.DefaultRequestHeaders.Add("Application-Version", "1.0.0");
+        client.DefaultRequestHeaders.Add("Application-Version", "1.1.0");
         return client;
     }
 
@@ -666,11 +669,11 @@ public static class NexusApi
         using var response = Api.PostAsync(Endpoint, content).GetAwaiter().GetResult();
         var text = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
         if (!response.IsSuccessStatusCode)
-            throw new InvalidOperationException($"Nexus 응답 오류 ({(int)response.StatusCode}). 잠시 후 다시 시도해 주세요.");
+            throw new InvalidOperationException(L.F("Nexus 응답 오류 ({0}). 잠시 후 다시 시도해 주세요.", (int)response.StatusCode));
         using var doc = JsonDocument.Parse(text);
         if (doc.RootElement.TryGetProperty("errors", out var errors) && errors.GetArrayLength() > 0
             && !doc.RootElement.TryGetProperty("data", out _))
-            throw new InvalidOperationException("Nexus가 요청을 처리하지 못했습니다: " + errors[0].GetProperty("message").GetString());
+            throw new InvalidOperationException(L.T("Nexus가 요청을 처리하지 못했습니다: ") + errors[0].GetProperty("message").GetString());
         return text;
     }
 
@@ -681,7 +684,7 @@ public static class NexusApi
         request.Headers.Accept.ParseAdd(accept);
         using var response = Api.Send(request);
         if (!response.IsSuccessStatusCode)
-            throw new InvalidOperationException($"응답 오류 ({(int)response.StatusCode}). 잠시 후 다시 시도해 주세요.");
+            throw new InvalidOperationException(L.F("응답 오류 ({0}). 잠시 후 다시 시도해 주세요.", (int)response.StatusCode));
         return response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
     }
 }
@@ -756,6 +759,38 @@ public static class GitHubApi
             LocalVersion = local,
             CheckedAt = DateTime.Now,
         };
+    }
+}
+
+/// <summary>Whether a newer release of this manager is out. Asked once when the window opens.</summary>
+public static class AppUpdate
+{
+    public static readonly GitHubLink Project = new("GameStdio77", "PBZModManager");
+
+    /// <summary>The newest release when it is newer than <paramref name="running"/>; null when not, or when GitHub cannot say.</summary>
+    public static (string Version, string Url)? Check(string running)
+    {
+        try
+        {
+            var json = NexusApi.Get($"https://api.github.com/repos/{Project.Owner}/{Project.Repo}/releases?per_page=10", "application/vnd.github+json");
+            return Newer(GitHubApi.ParseReleases(json, null, Project), running);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or InvalidOperationException or JsonException)
+        {
+            return null;
+        }
+    }
+
+    public static (string Version, string Url)? Newer(RemoteInfo? latest, string running) =>
+        latest != null && Version.TryParse(Pad(latest.Version), out var found) && Version.TryParse(Pad(running), out var mine) && found > mine
+            ? (latest.Version, latest.PageUrl)
+            : null;
+
+    /// <summary>"1.1" reads as 1.1.0, so it compares with "1.1.0" as the same.</summary>
+    static string Pad(string version)
+    {
+        var core = version.Split('-', '+')[0];
+        return core.Count(c => c == '.') == 0 ? core + ".0" : core;
     }
 }
 
@@ -969,6 +1004,8 @@ public sealed class Manager
         public WindowLayout? Window { get; set; }
         /// <summary>The game folder last used with this mod folder, found again from here on the next start.</summary>
         public string GameRoot { get; set; } = "";
+        /// <summary>The language picked in the window; empty follows Windows.</summary>
+        public string Language { get; set; } = "";
     }
 
     Settings settings;
@@ -986,6 +1023,29 @@ public sealed class Manager
             return null;
         }
     }
+
+    /// <summary>The language saved in a mod folder's records, read before any window is made.</summary>
+    public static string? SavedLanguage(string modDir)
+    {
+        try
+        {
+            var path = Path.Combine(modDir, ".manager", "settings.json");
+            return File.Exists(path) && JsonSerializer.Deserialize<Settings>(File.ReadAllText(path)) is { Language.Length: > 0 } s ? s.Language : null;
+        }
+        catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException or NotSupportedException)
+        {
+            return null;
+        }
+    }
+
+    public void SaveLanguage(string code)
+    {
+        settings.Language = code;
+        SaveSettings();
+    }
+
+    /// <summary>The Steam build's game program, which the launch button starts.</summary>
+    public string GameExe => Path.Combine(Root, "platform", "steam", "PBZ.exe");
 
     /// <summary>Keeps the game folder with the records when it changed.</summary>
     public void RememberGameRoot()
@@ -1093,11 +1153,11 @@ public sealed class Manager
     public void DeleteZip(string fileName)
     {
         if (History().Any(t => t.ZipName.Equals(fileName, StringComparison.OrdinalIgnoreCase)))
-            throw new InvalidOperationException($"설치된 버전의 파일은 삭제할 수 없습니다. 먼저 모드를 제거하거나 다른 버전으로 업데이트해 주세요.\n{fileName}");
+            throw new InvalidOperationException(L.F("설치된 버전의 파일은 삭제할 수 없습니다. 먼저 모드를 제거하거나 다른 버전으로 업데이트해 주세요.\n{0}", fileName));
         var path = Path.Combine(ModDir, Path.GetFileName(fileName));
         if (!File.Exists(path)) return;
         if (!SendToRecycleBin(path))
-            throw new IOException($"파일을 휴지통으로 보내지 못했습니다: {fileName}");
+            throw new IOException(L.F("파일을 휴지통으로 보내지 못했습니다: {0}", fileName));
     }
 
     /// <summary>Moves a file or folder to the Recycle Bin, without asking; true when it is gone from where it was.</summary>
@@ -1197,14 +1257,14 @@ public sealed class Manager
     {
         var full = Path.GetFullPath(source);
         if (!File.Exists(full) || !Path.GetExtension(full).Equals(".zip", StringComparison.OrdinalIgnoreCase))
-            throw new InvalidOperationException($"zip 파일만 추가할 수 있습니다: {Path.GetFileName(full)}");
+            throw new InvalidOperationException(L.F("zip 파일만 추가할 수 있습니다: {0}", Path.GetFileName(full)));
         try
         {
             using var zip = ZipFile.OpenRead(full);
         }
         catch (InvalidDataException)
         {
-            throw new InvalidOperationException($"올바른 zip 파일이 아닙니다: {Path.GetFileName(full)}");
+            throw new InvalidOperationException(L.F("올바른 zip 파일이 아닙니다: {0}", Path.GetFileName(full)));
         }
 
         var dest = Path.Combine(ModDir, Path.GetFileName(full));
@@ -1219,7 +1279,7 @@ public sealed class Manager
         if (File.Exists(dest))
         {
             if (HashFile(dest) == HashFile(full)) return dest;
-            throw new InvalidOperationException($"MOD 폴더에 이름이 같은 다른 파일이 이미 있습니다: {Path.GetFileName(full)}");
+            throw new InvalidOperationException(L.F("MOD 폴더에 이름이 같은 다른 파일이 이미 있습니다: {0}", Path.GetFileName(full)));
         }
 
         var tmp = NewTmpPath();
@@ -1257,11 +1317,11 @@ public sealed class Manager
             .Select(f => f.Path).ToHashSet(StringComparer.OrdinalIgnoreCase);
         return tx.Files.Select(f =>
         {
-            if (later.Contains(f.Path)) return new FileStatus(f, "이후 설치로 덮어씀");
+            if (later.Contains(f.Path)) return new FileStatus(f, L.T("이후 설치로 덮어씀"));
             var cur = CurrentHash(f.Path);
-            if (f.Deleted) return new FileStatus(f, cur == null ? "새 버전에 없어 제거됨" : "변경됨");
-            if (cur == null) return new FileStatus(f, "없음");
-            return new FileStatus(f, cur == f.InstalledHash ? "정상" : "변경됨");
+            if (f.Deleted) return new FileStatus(f, cur == null ? L.T("새 버전에 없어 제거됨") : L.T("변경됨"));
+            if (cur == null) return new FileStatus(f, L.T("없음"));
+            return new FileStatus(f, cur == f.InstalledHash ? L.T("정상") : L.T("변경됨"));
         }).ToList();
     }
 
@@ -1464,8 +1524,8 @@ public sealed class Manager
 
     // ---------------------------------------------------------------- categories
 
-    public const string NoCategory = "미분류";
-    public const string AllCategories = "전체";
+    public static string NoCategory => L.T("미분류");
+    public static string AllCategories => L.T("전체");
 
     string CategoriesPath => Path.Combine(StateDir, "categories.json");
 
@@ -1499,12 +1559,12 @@ public sealed class Manager
     /// <returns>Why the name cannot be used, or null if it is fine.</returns>
     public static string? CategoryNameProblem(string name, IReadOnlyList<string> categories, string? renaming = null)
     {
-        if (name.Length == 0) return "이름을 입력해 주세요.";
+        if (name.Length == 0) return L.T("이름을 입력해 주세요.");
         if (name.Equals(NoCategory, StringComparison.OrdinalIgnoreCase) || name.Equals(AllCategories, StringComparison.OrdinalIgnoreCase))
-            return $"'{name}'은(는) 이미 쓰고 있는 이름이라 사용할 수 없습니다.";
+            return L.F("'{0}'은(는) 이미 쓰고 있는 이름이라 사용할 수 없습니다.", name);
         bool taken = categories.Any(c => c.Equals(name, StringComparison.OrdinalIgnoreCase)
             && !c.Equals(renaming, StringComparison.OrdinalIgnoreCase));
-        return taken ? $"'{name}' 카테고리가 이미 있습니다." : null;
+        return taken ? L.F("'{0}' 카테고리가 이미 있습니다.", name) : null;
     }
 
     public static void RenameCategory(IDictionary<string, ModMeta> meta, List<string> categories, string oldName, string newName)
@@ -1546,7 +1606,7 @@ public sealed class Manager
         int fileCount = laid.Count(l => !l.IsDir), read = 0;
         foreach (var (entry, rel, isDir, placement) in laid)
         {
-            if (!isDir) progress?.Invoke($"압축 파일 확인 중... {++read}/{fileCount}");
+            if (!isDir) progress?.Invoke(L.F("압축 파일 확인 중... {0}/{1}", ++read, fileCount));
             if (!isDir) plan.Placements[placement] = plan.Placements.GetValueOrDefault(placement) + 1;
             if (placement == Placement.UserLeftOut) plan.Excluded.Add(rel);
             if (placement >= Placement.OtherCopyLeftOut) continue;
@@ -1557,16 +1617,16 @@ public sealed class Manager
             while (parent != null)
             {
                 if (File.Exists(Full(parent)))
-                    throw new InvalidOperationException($"폴더가 들어갈 자리에 같은 이름의 파일이 있습니다: {parent}");
+                    throw new InvalidOperationException(L.F("폴더가 들어갈 자리에 같은 이름의 파일이 있습니다: {0}", parent));
                 if (!Directory.Exists(Full(parent))) dirs.Add(parent);
                 parent = ParentOf(parent);
             }
             if (isDir) continue;
 
             if (!seen.Add(rel))
-                throw new InvalidOperationException($"압축 안에 같은 경로의 파일이 중복됩니다: {rel}");
+                throw new InvalidOperationException(L.F("압축 안에 같은 경로의 파일이 중복됩니다: {0}", rel));
             if (Directory.Exists(Full(rel)))
-                throw new InvalidOperationException($"파일이 들어갈 자리에 같은 이름의 폴더가 있습니다: {rel}");
+                throw new InvalidOperationException(L.F("파일이 들어갈 자리에 같은 이름의 폴더가 있습니다: {0}", rel));
 
             string newHash;
             using (var s = entry.Open()) newHash = HashStream(s);
@@ -1583,49 +1643,49 @@ public sealed class Manager
         plan.NewDirs.AddRange(dirs.OrderBy(d => d.Length).ThenBy(d => d, StringComparer.OrdinalIgnoreCase));
         FindStaleFiles(plan, seen, ModIdentity.KeyOf(seen, Path.GetFileName(zipPath)));
         if (plan.Relocated.Count > 0)
-            plan.Warnings.Add($"Mods Menu용 파일 {plan.Relocated.Count}개를 모드 로더 폴더로 옮겨 설치합니다. Mods Menu의 설정 화면은 쓸 수 없고, 메뉴 기능이 필요한 모드는 동작하지 않을 수 있습니다.");
+            plan.Warnings.Add(L.F("Mods Menu용 파일 {0}개를 모드 로더 폴더로 옮겨 설치합니다. Mods Menu의 설정 화면은 쓸 수 없고, 메뉴 기능이 필요한 모드는 동작하지 않을 수 있습니다.", plan.Relocated.Count));
         if (plan.PlacedBesideGame > 0)
-            plan.Warnings.Add($"UE4SS 파일 {plan.PlacedBesideGame}개를 게임 실행 파일(PBZ.exe) 옆인 platform/steam에 설치합니다.");
+            plan.Warnings.Add(L.F("UE4SS 파일 {0}개를 게임 실행 파일(PBZ.exe) 옆인 platform/steam에 설치합니다.", plan.PlacedBesideGame));
         if (plan.SkippedCopies > 0)
             plan.Warnings.Add(TargetRuntime == ScriptRuntime.Menu
-                ? $"모드 로더용 복사본 {plan.SkippedCopies}개는 설치하지 않습니다. 같은 모드가 Mods Menu용으로도 들어 있습니다."
-                : $"Mods Menu용 복사본 {plan.SkippedCopies}개는 설치하지 않습니다. 같은 모드가 모드 로더용으로도 들어 있습니다.");
+                ? L.F("모드 로더용 복사본 {0}개는 설치하지 않습니다. 같은 모드가 Mods Menu용으로도 들어 있습니다.", plan.SkippedCopies)
+                : L.F("Mods Menu용 복사본 {0}개는 설치하지 않습니다. 같은 모드가 모드 로더용으로도 들어 있습니다.", plan.SkippedCopies));
         // Both loaders installed: whichever starts first runs, and Mods Menu then stays off.
         bool Has(string path) => plan.Items.Any(i => i.Path.Equals(path, StringComparison.OrdinalIgnoreCase));
         if (Has(ModIdentity.LoaderBootstrap) && MenuInstalled)
-            plan.Warnings.Add("Mods Menu가 이미 설치되어 있습니다. 두 스크립트 로더가 함께 있으면 하나만 동작하니, 쓰지 않을 쪽은 제거해 주세요.");
+            plan.Warnings.Add(L.T("Mods Menu가 이미 설치되어 있습니다. 두 스크립트 로더가 함께 있으면 하나만 동작하니, 쓰지 않을 쪽은 제거해 주세요."));
         if (Has(ModIdentity.MenuBootstrap) && LoaderInstalled)
-            plan.Warnings.Add("PBZModLoader가 이미 설치되어 있습니다. 두 스크립트 로더가 함께 있으면 하나만 동작하니, 쓰지 않을 쪽은 제거해 주세요.");
+            plan.Warnings.Add(L.T("PBZModLoader가 이미 설치되어 있습니다. 두 스크립트 로더가 함께 있으면 하나만 동작하니, 쓰지 않을 쪽은 제거해 주세요."));
         if (plan.Placements.GetValueOrDefault(Placement.Pak) > 0)
             foreach (var home in new[] { LooseLayout.PakHome, LooseLayout.LogicModsHome })
                 if (plan.Items.Count(i => i.Path.StartsWith(home, StringComparison.OrdinalIgnoreCase) && !i.Path[home.Length..].Contains('/')) is > 0 and var paks)
-                    plan.Warnings.Add($"pak 파일 {paks}개를 {home.TrimEnd('/')}에 설치합니다.");
+                    plan.Warnings.Add(L.F("pak 파일 {0}개를 {1}에 설치합니다.", paks, home.TrimEnd('/')));
         if (plan.Ue4ssMods.Count > 0)
         {
-            plan.Warnings.Add($"UE4SS 모드 {string.Join(", ", plan.Ue4ssMods)}을(를) {LooseLayout.Ue4ssModsHome.TrimEnd('/')}에 설치합니다.");
+            plan.Warnings.Add(L.F("UE4SS 모드 {0}을(를) {1}에 설치합니다.", string.Join(", ", plan.Ue4ssMods), LooseLayout.Ue4ssModsHome.TrimEnd('/')));
             if (!File.Exists(Full(ModIdentity.Ue4ssHome + "dwmapi.dll")))
-                plan.Warnings.Add("UE4SS가 설치되어 있지 않습니다. UE4SS를 먼저 설치해야 이 모드가 동작합니다.");
+                plan.Warnings.Add(L.T("UE4SS가 설치되어 있지 않습니다. UE4SS를 먼저 설치해야 이 모드가 동작합니다."));
         }
         if (plan.Placements.GetValueOrDefault(Placement.BesideExe) is > 0 and var beside)
-            plan.Warnings.Add($"파일 {beside}개를 게임 실행 파일(PBZ.exe) 옆인 platform/steam에 설치합니다.");
+            plan.Warnings.Add(L.F("파일 {0}개를 게임 실행 파일(PBZ.exe) 옆인 platform/steam에 설치합니다.", beside));
         var unchosenFiles = plan.Placements.GetValueOrDefault(Placement.UnchosenLeftOut);
         var pictures = plan.Placements.GetValueOrDefault(Placement.PictureLeftOut);
         if (unchosenFiles + pictures > 0)
-            plan.Warnings.Add("설치하지 않는 파일: " + string.Join(", ", new[]
+            plan.Warnings.Add(L.T("설치하지 않는 파일: ") + string.Join(", ", new[]
             {
-                unchosenFiles > 0 ? $"고르지 않은 옵션 {unchosenFiles}개" : null,
-                pictures > 0 ? $"설명 그림 {pictures}개" : null,
+                unchosenFiles > 0 ? L.F("고르지 않은 옵션 {0}개", unchosenFiles) : null,
+                pictures > 0 ? L.F("설명 그림 {0}개", pictures) : null,
             }.Where(s => s != null)));
 
         // Backups and new files together need at most the size of the archive contents twice.
         var free = new DriveInfo(Path.GetPathRoot(Root)!).AvailableFreeSpace;
         if (totalSize * 2 > free)
-            throw new InvalidOperationException("디스크 여유 공간이 부족합니다.");
+            throw new InvalidOperationException(L.T("디스크 여유 공간이 부족합니다."));
 
         // Detects the "extra wrapping folder" packaging mistake: nothing would land in an existing folder.
         var tops = plan.Items.Select(i => i.Path).Concat(dirs).Select(p => p.Split('/')[0]).Distinct();
         if (!tops.Any(t => Directory.Exists(Full(t)) && !dirs.Contains(t)))
-            plan.Warnings.Add("압축의 최상위 폴더가 게임 폴더 구조와 맞지 않습니다. 폴더가 한 겹 더 감싸져 있을 수 있습니다.");
+            plan.Warnings.Add(L.T("압축의 최상위 폴더가 게임 폴더 구조와 맞지 않습니다. 폴더가 한 겹 더 감싸져 있을 수 있습니다."));
         return plan;
     }
 
@@ -1745,13 +1805,13 @@ public sealed class Manager
         EnsureGameNotRunning();
         var pending = Pending();
         if (pending != null)
-            throw new InvalidOperationException($"#{pending.Id} 작업이 중단된 상태입니다. 먼저 되돌려 주세요.");
+            throw new InvalidOperationException(L.F("#{0} 작업이 중단된 상태입니다. 먼저 되돌려 주세요.", pending.Id));
 
         var plan = BuildPlan(expected.ZipPath, expected.Chosen, expected.Excluded, progress);
         if (plan.Fingerprint() != expected.Fingerprint())
-            throw new InvalidOperationException("미리보기 이후 게임 폴더가 변경되었습니다. 다시 시도해 주세요.");
+            throw new InvalidOperationException(L.T("미리보기 이후 게임 폴더가 변경되었습니다. 다시 시도해 주세요."));
         if (!plan.HasChanges)
-            throw new InvalidOperationException("적용할 변경 사항이 없습니다.");
+            throw new InvalidOperationException(L.T("적용할 변경 사항이 없습니다."));
 
         var changes = plan.Items.Where(i => i.Kind is ChangeKind.Add or ChangeKind.Overwrite).ToList();
         var tx = new Tx
@@ -1785,21 +1845,21 @@ public sealed class Manager
 
         try
         {
-            progress?.Invoke("백업 중...");
+            progress?.Invoke(L.T("백업 중..."));
             var toBackUp = changes.Where(i => i.Kind == ChangeKind.Overwrite).Select(i => (i.Path, i.OldHash))
                 .Concat(plan.Stale.Select(s => (s.Path, (string?)s.Hash))).ToList();
             int backedUp = 0;
             foreach (var (path, hash) in toBackUp)
             {
-                progress?.Invoke($"백업 중... {++backedUp}/{toBackUp.Count}");
+                progress?.Invoke(L.F("백업 중... {0}/{1}", ++backedUp, toBackUp.Count));
                 var backup = BackupPath(tx.Id, path);
                 Directory.CreateDirectory(Path.GetDirectoryName(backup)!);
                 File.Copy(Full(path), backup, overwrite: true);
                 if (HashFile(backup) != hash)
-                    throw new IOException($"백업 검증 실패: {path}");
+                    throw new IOException(L.F("백업 검증 실패: {0}", path));
             }
 
-            progress?.Invoke("파일 복사 중...");
+            progress?.Invoke(L.T("파일 복사 중..."));
             foreach (var dir in plan.NewDirs) Directory.CreateDirectory(Full(dir));
 
             using var zip = ZipFile.OpenRead(plan.ZipPath);
@@ -1809,7 +1869,7 @@ public sealed class Manager
             int copied = 0;
             foreach (var item in changes)
             {
-                progress?.Invoke($"파일 복사 중... {++copied}/{changes.Count}");
+                progress?.Invoke(L.F("파일 복사 중... {0}/{1}", ++copied, changes.Count));
                 var entry = byPath[item.Path];
                 var tmp = NewTmpPath();
                 try
@@ -1817,7 +1877,7 @@ public sealed class Manager
                     using (var input = entry.Open())
                     using (var output = File.Create(tmp)) input.CopyTo(output);
                     if (HashFile(tmp) != item.NewHash)
-                        throw new IOException($"압축 해제 검증 실패: {item.Path}");
+                        throw new IOException(L.F("압축 해제 검증 실패: {0}", item.Path));
                     if (entry.LastWriteTime.Year >= 1980)
                         File.SetLastWriteTime(tmp, entry.LastWriteTime.DateTime);
                     MoveReplacing(tmp, Full(item.Path));
@@ -1832,12 +1892,12 @@ public sealed class Manager
 
             tx.State = Tx.Installed;
             SaveTx(tx);
-            Log($"{(plan.ReplacesZip == null ? "설치" : "업데이트")} #{tx.Id} {tx.ZipName} (추가 {tx.Files.Count(f => !f.Overwrote)}, 덮어씀 {tx.Files.Count(f => f.Overwrote && !f.Deleted)}, 옛 파일 제거 {plan.Stale.Count})");
+            Log(L.F("{0} #{1} {2} (추가 {3}, 덮어씀 {4}, 옛 파일 제거 {5})", (plan.ReplacesZip == null ? L.T("설치") : L.T("업데이트")), tx.Id, tx.ZipName, tx.Files.Count(f => !f.Overwrote), tx.Files.Count(f => f.Overwrote && !f.Deleted), plan.Stale.Count));
             return tx;
         }
         catch (Exception ex)
         {
-            Log($"설치 실패 #{tx.Id} {tx.ZipName}: {ex.Message}");
+            Log(L.F("설치 실패 #{0} {1}: {2}", tx.Id, tx.ZipName, ex.Message));
             try
             {
                 UndoTx(tx, NewLeftoverRun(tx.Id));
@@ -1845,9 +1905,9 @@ public sealed class Manager
             catch (Exception undoEx)
             {
                 throw new InvalidOperationException(
-                    $"설치 실패: {ex.Message}\n자동 복구도 실패했습니다: {undoEx.Message}\n다시 실행하면 복구를 재시도합니다.", ex);
+                    L.F("설치 실패: {0}\n자동 복구도 실패했습니다: {1}\n다시 실행하면 복구를 재시도합니다.", ex.Message, undoEx.Message), ex);
             }
-            throw new InvalidOperationException($"설치 실패, 원래 상태로 복구했습니다.\n{ex.Message}", ex);
+            throw new InvalidOperationException(L.F("설치 실패, 원래 상태로 복구했습니다.\n{0}", ex.Message), ex);
         }
     }
 
@@ -1901,13 +1961,13 @@ public sealed class Manager
     {
         EnsureGameNotRunning();
         if (!History().Any(t => t.Id >= targetId))
-            throw new InvalidOperationException($"#{targetId} 기록이 없습니다.");
+            throw new InvalidOperationException(L.F("#{0} 기록이 없습니다.", targetId));
 
         var leftovers = NewLeftoverRun(targetId);
         FinishPending(leftovers);
         foreach (var tx in History().Where(t => t.Id >= targetId).OrderByDescending(t => t.Id))
         {
-            progress?.Invoke($"#{tx.Id} 되돌리는 중...");
+            progress?.Invoke(L.F("#{0} 되돌리는 중...", tx.Id));
             UndoTx(tx, leftovers);
         }
         return Directory.Exists(leftovers) ? leftovers : null;
@@ -1984,7 +2044,7 @@ public sealed class Manager
         FinishPending(leftovers);
         foreach (var tx in History().Where(t => ids.Contains(t.Id)).OrderByDescending(t => t.Id))
         {
-            progress?.Invoke($"#{tx.Id} 제거 중...");
+            progress?.Invoke(L.F("#{0} 제거 중...", tx.Id));
             UndoTx(tx, leftovers);
         }
         return Directory.Exists(leftovers) ? leftovers : null;
@@ -1996,14 +2056,14 @@ public sealed class Manager
     {
         EnsureGameNotRunning();
         if (History().All(t => t.Id != id))
-            throw new InvalidOperationException($"#{id} 기록이 없습니다.");
+            throw new InvalidOperationException(L.F("#{0} 기록이 없습니다.", id));
 
         var leftovers = NewLeftoverRun(id);
         FinishPending(leftovers);
         var tx = History().FirstOrDefault(t => t.Id == id);
         if (tx != null)
         {
-            progress?.Invoke($"#{id} 제거 중...");
+            progress?.Invoke(L.F("#{0} 제거 중...", id));
             UndoTx(tx, leftovers);
         }
         return Directory.Exists(leftovers) ? leftovers : null;
@@ -2090,7 +2150,7 @@ public sealed class Manager
         }
 
         Directory.Delete(TxDir(tx.Id), recursive: true);
-        Log($"되돌림 #{tx.Id} {tx.ZipName}" + (Directory.Exists(leftovers) ? $" (보관: {Path.GetFileName(leftovers)})" : ""));
+        Log(L.F("되돌림 #{0} {1}", tx.Id, tx.ZipName) + (Directory.Exists(leftovers) ? L.F(" (보관: {0})", Path.GetFileName(leftovers)) : ""));
     }
 
     /// <summary>
@@ -2128,13 +2188,13 @@ public sealed class Manager
     {
         var backup = BackupPath(txId, f.Path);
         if (!File.Exists(backup))
-            throw new IOException($"백업 파일이 없습니다: {f.Path}");
+            throw new IOException(L.F("백업 파일이 없습니다: {0}", f.Path));
         var tmp = NewTmpPath();
         try
         {
             File.Copy(backup, tmp, overwrite: true);
             if (HashFile(tmp) != f.BackupHash)
-                throw new IOException($"백업 파일이 손상되었습니다: {f.Path}");
+                throw new IOException(L.F("백업 파일이 손상되었습니다: {0}", f.Path));
             Directory.CreateDirectory(Path.GetDirectoryName(Full(f.Path))!);
             MoveReplacing(tmp, Full(f.Path));
         }
@@ -2177,7 +2237,7 @@ public sealed class Manager
     {
         var rel = entryName.Replace('\\', '/').TrimEnd('/');
         if (rel.Length == 0 || rel.StartsWith('/'))
-            throw new InvalidOperationException($"허용되지 않는 압축 경로: {entryName}");
+            throw new InvalidOperationException(L.F("허용되지 않는 압축 경로: {0}", entryName));
 
         var parts = rel.Split('/');
         var invalid = Path.GetInvalidFileNameChars();
@@ -2193,16 +2253,16 @@ public sealed class Manager
                         || stem.StartsWith("LPT", StringComparison.OrdinalIgnoreCase)));
             if (part.Length == 0 || part is "." or ".." || reserved || part.EndsWith('.') || part.EndsWith(' ')
                 || part.IndexOfAny(invalid) >= 0)
-                throw new InvalidOperationException($"허용되지 않는 압축 경로: {entryName}");
+                throw new InvalidOperationException(L.F("허용되지 않는 압축 경로: {0}", entryName));
         }
         // Only a folder that really is the manager's, inside the game folder, is off limits.
         if (Path.GetDirectoryName(ModDir)!.Equals(Root, StringComparison.OrdinalIgnoreCase)
             && parts[0].Equals(Path.GetFileName(ModDir), StringComparison.OrdinalIgnoreCase))
-            throw new InvalidOperationException($"매니저 폴더에는 설치할 수 없습니다: {entryName}");
+            throw new InvalidOperationException(L.F("매니저 폴더에는 설치할 수 없습니다: {0}", entryName));
 
         var full = Path.GetFullPath(Path.Combine(Root, ToNative(rel)));
         if (!full.StartsWith(Root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
-            throw new InvalidOperationException($"허용되지 않는 압축 경로: {entryName}");
+            throw new InvalidOperationException(L.F("허용되지 않는 압축 경로: {0}", entryName));
         return rel;
     }
 
@@ -2266,7 +2326,7 @@ public sealed class Manager
     static void EnsureGameNotRunning()
     {
         if (!IgnoreGameForTests && GameRunning())
-            throw new InvalidOperationException("게임이 실행 중입니다. 게임을 종료한 뒤 다시 시도해 주세요.");
+            throw new InvalidOperationException(L.T("게임이 실행 중입니다. 게임을 종료한 뒤 다시 시도해 주세요."));
     }
 
     void SaveTx(Tx tx)

@@ -1,7 +1,7 @@
 ﻿// Checks the real window on a hidden desktop: it cannot take focus, appear on screen, or touch the
 // mouse, so the PC stays usable while it runs. Keep this to whatever feature is being worked on.
 // Nothing is installed to a real game folder; the work dir holds a throwaway one.
-// Usage: UiChecks <empty work dir>
+// Usage: UiChecks <empty work dir> [ko|en|zh|ja]   (another language only draws pictures of the windows)
 using System.IO.Compression;
 using System.Net;
 using System.Runtime.InteropServices;
@@ -52,13 +52,13 @@ static class UiChecks
         {
             using var log = new StreamWriter(Path.Combine(args[0], "results.txt")) { AutoFlush = true };
             Console.SetOut(log);
-            return Run(args[0]);
+            return args.Length > 2 && args[2] != "ko" ? Pictures(args[0], args[2]) : Run(args[0]);
         }
-        return StartOnHiddenDesktop(args[0]);
+        return StartOnHiddenDesktop(args[0], args.Length > 1 ? args[1] : "ko");
     }
 
     /// <summary>Runs this program again with a desktop of its own, which nothing on screen can see or be affected by.</summary>
-    static int StartOnHiddenDesktop(string workDir)
+    static int StartOnHiddenDesktop(string workDir, string language)
     {
         const string desktopName = "PBZModManagerChecks";
         Directory.CreateDirectory(workDir);
@@ -70,7 +70,7 @@ static class UiChecks
         }
 
         var startup = new StartupInfo { Size = Marshal.SizeOf<StartupInfo>(), Desktop = desktopName };
-        var commandLine = new StringBuilder($"\"{Environment.ProcessPath}\" \"{workDir}\" --on-hidden-desktop");
+        var commandLine = new StringBuilder($"\"{Environment.ProcessPath}\" \"{workDir}\" --on-hidden-desktop {language}");
         const uint CreateNoWindow = 0x08000000;
         if (!CreateProcess(null, commandLine, IntPtr.Zero, IntPtr.Zero, false, CreateNoWindow, IntPtr.Zero, null, ref startup, out var info))
         {
@@ -120,7 +120,9 @@ static class UiChecks
         {
             var url = request.RequestUri!.ToString();
             var body = request.Content?.ReadAsStringAsync(token).GetAwaiter().GetResult() ?? "";
-            var json = url.Contains("api.github.com")
+            var json = url.Contains("GameStdio77/PBZModManager")
+                ? """[{"tag_name":"v9.1.0","prerelease":false,"draft":false,"html_url":"https://github.com/GameStdio77/PBZModManager/releases/tag/v9.1.0","assets":[]}]"""
+                : url.Contains("api.github.com")
                 ? """[{"tag_name":"2.7.1","prerelease":false,"draft":false,"html_url":"https://github.com/XTGMods/UUEPBS/releases/tag/2.7.1","assets":[{"digest":"sha256:LOCALHASH"}]}]"""
                 : body.Contains("game(domainName") ? """{"data":{"game":{"id":"10614"}}}"""
                 : body.Contains("description") ? """{"data":{"legacyModsByDomain":{"nodes":[{"modCategory":{"name":"Visuals"},"description":"Installation:<br />1. Step one<br />Uninstall:<br />x"}]}}}"""
@@ -139,39 +141,39 @@ static class UiChecks
                 stream.Write(Encoding.UTF8.GetBytes(text));
     }
 
-    static int Run(string workDir)
+    static Manager MakeGame(string workDir, StandIn standIn)
     {
         Manager.IgnoreGameForTests = Manager.GameRunning();
-        var standIn = new StandIn();
         NexusApi.UseHandlerForChecks(standIn);
         var root = Path.Combine(workDir, "game");
         Directory.CreateDirectory(Path.Combine(root, "ProjectPBZ"));
         Directory.CreateDirectory(Path.Combine(root, "platform", "steam"));
+        // A stand-in game program: the launch button is checked, nothing is started.
+        File.WriteAllText(Path.Combine(root, "platform", "steam", "PBZ.exe"), "");
         var manager = new Manager(root);
         const string old = "Old 1.0 501 1.0 2026-01-01T00-00Z a.zip";
-        const string uuepbs = "UUEPBS.zip";
         Zip(Path.Combine(manager.ModDir, old), ("ProjectPBZ/Content/Paks/~mods/Old_P.pak", "o"));
-        Zip(Path.Combine(manager.ModDir, uuepbs), ("UUEPBS/Scripts/main.lua", "lua"));
-        using (var s = File.OpenRead(Path.Combine(manager.ModDir, uuepbs)))
-            standIn.LocalHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(s));
-        // Notes saved the old way: install steps inside a memo of several lines.
-        File.WriteAllText(Path.Combine(manager.StateDir, "meta.json"), System.Text.Json.JsonSerializer.Serialize(new Dictionary<string, object>
-        {
-            [old] = new { Registered = true, Memo = "[Nexus 설명의 설치 방법]\nInstallation:\n1. Close the game.", Url = "https://www.nexusmods.com/phantombladezero/mods/501" },
-            [uuepbs] = new { Registered = true, Memo = "body slider\nneeds UE4SS", Url = "https://github.com/XTGMods/UUEPBS" },
-        }));
-        var migrated = manager.LoadMeta();
-        Check("old install steps moved out of the memo", migrated[old].Memo == "" && migrated[old].InstallNotes.StartsWith("Installation:"));
-        Check("a memo of several lines becomes one", migrated[uuepbs].Memo == "body slider · needs UE4SS");
         manager.Install(manager.BuildPlan(Path.Combine(manager.ModDir, old)));
-        manager.Install(manager.BuildPlan(Path.Combine(manager.ModDir, uuepbs)));
+        return manager;
+    }
 
+    static void Click(Control control) =>
+        typeof(Control).GetMethod("OnClick", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.Invoke(control, new object[] { EventArgs.Empty });
+
+    static int Run(string workDir)
+    {
+        var standIn = new StandIn();
+        var manager = MakeGame(workDir, standIn);
         var opened = new List<string>();
+        var started = new List<string>();
+        var restarts = 0;
         var form = new MainForm(manager, Array.Empty<string>(), opened.Add)
         {
             StartPosition = FormStartPosition.Manual,
             ShowInTaskbar = false,
             ClientSize = new Size(1500, 860),
+            StartGame = started.Add,
+            RestartApp = () => restarts++,
         };
         Application.ThreadException += (_, e) =>
         {
@@ -182,50 +184,68 @@ static class UiChecks
         {
             try
             {
-                await Task.Delay(700);
-                var lists = All(form).OfType<DarkListView>().ToList();
-                var zipList = lists[0];
-                var installedList = lists.First(l => l.Columns[0].Text == "순번");
-                ListViewItem Installed(string name) => installedList.Items.Cast<ListViewItem>().First(i => i.SubItems[1].Text == name);
+                await Task.Delay(1200);
+                // The manager's own newer release shows in the corner, beside the project link.
+                var update = All(form).OfType<Label>().FirstOrDefault(l => l.Text.StartsWith("새 버전"));
+                Check("newer manager release shown: " + update?.Text, update is { Visible: true, Text: "새 버전 v9.1.0 있음" });
                 var link = All(form).OfType<Label>().First(l => l.Text.StartsWith("GitHub · v"));
-                typeof(Control).GetMethod("OnClick", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.Invoke(link, new object[] { EventArgs.Empty });
-                Check("GitHub link opens the project page: " + link.Text, opened.SingleOrDefault() == "https://github.com/GameStdio77/PBZModManager");
-                Check("installed list has a memo column", installedList.Columns[3].Text == "메모" && Installed("UUEPBS").SubItems[3].Text == "body slider · needs UE4SS");
+                Check("project link stays in the corner", update != null && link.Left > update.Left);
+                Click(update!);
+                Check("the notice opens the release page", opened.LastOrDefault() == "https://github.com/GameStdio77/PBZModManager/releases/tag/v9.1.0");
+                Check("an older or same release is not news", AppUpdate.Newer(new RemoteInfo { Version = "1.0.0", PageUrl = "x" }, "1.0.0") == null
+                    && AppUpdate.Newer(new RemoteInfo { Version = "1.1", PageUrl = "x" }, "1.0.0") != null
+                    && AppUpdate.Newer(new RemoteInfo { Version = "0.9.5", PageUrl = "x" }, "1.0.0") == null);
 
-                // After the check, UUEPBS's version known from GitHub shows in the installed list too.
-                Find(form, "최신 버전 확인").PerformClick();
-                var report = await Window<Form>(form, f => f.Text == "최신 버전 확인");
-                Find(report, "확인").PerformClick();
-                await Task.Delay(400);
-                Check("installed list shows the GitHub-known version: " + Installed("UUEPBS").SubItems[2].Text, Installed("UUEPBS").SubItems[2].Text == "(2.7.1)");
+                // The launch button starts the Steam build's program.
+                if (!Manager.GameRunning())
+                {
+                    Find(form, "게임 실행").PerformClick();
+                    await Task.Delay(300);
+                    Check("launch starts platform/steam/PBZ.exe", started.SingleOrDefault() == manager.GameExe
+                        && manager.GameExe.EndsWith(Path.Combine("platform", "steam", "PBZ.exe")));
+                }
+                else
+                {
+                    // The real game is open: the button says so and starts nothing.
+                    Find(form, "게임 실행").PerformClick();
+                    var said = await Window<Form>(form, f => Shows(f, "게임이 이미 실행 중입니다."));
+                    Find(said, "확인").PerformClick();
+                    await Task.Delay(200);
+                    Check("launch while the game runs starts nothing", started.Count == 0);
+                }
 
-                // The info panel: a one-line memo, and install steps kept apart and read-only.
-                foreach (ListViewItem i in zipList.Items) i.Selected = i.SubItems[0].Text.Trim() == "Old";
+                // Picking a language saves it and offers a restart.
+                var languageBox = All(form).OfType<DarkComboBox>().Single(c => c.Items.Contains("English"));
+                Check("four languages offered, Korean chosen", languageBox.Items.Count == 4 && (string)languageBox.SelectedItem! == "한국어");
+                languageBox.SelectedIndex = 1;
+                typeof(ComboBox).GetMethod("OnSelectionChangeCommitted", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                    .Invoke(languageBox, new object[] { EventArgs.Empty });
+                var ask = await Window<Form>(form, f => f.Text == "Language");
+                Check("restart asked in both languages", Shows(ask, "Restart now?") && Shows(ask, "지금 다시 시작할까요?"));
+                Find(ask, "예").PerformClick();
                 await Task.Delay(300);
-                var boxes = All(form).OfType<TextBox>().ToList();
-                var memo = boxes.First(b => !b.Multiline && b.MaxLength == 200);
-                var notes = boxes.First(b => b.Multiline && b.ReadOnly);
-                Check("install steps shown apart: " + notes.Text.Replace("\r\n", " / "), notes.Text.StartsWith("Installation:"));
-                memo.Text = "graphics fix";
-                await Task.Delay(300);
-                Check("memo saved and shown in the installed list", manager.LoadMeta()[old].Memo == "graphics fix" && Installed("Old").SubItems[3].Text == "graphics fix");
-                Find(form, "다시 가져오기").PerformClick();
-                await Task.Delay(800);
-                Check("fetched again from the page", notes.Text.StartsWith("Installation:") && notes.Text.Contains("1. Step one") && manager.LoadMeta()[old].Memo == "graphics fix");
+                Check("language saved, restart asked for", Manager.SavedLanguage(manager.ModDir) == "en" && restarts == 1 && L.Current == "ko");
 
-                // A short info panel folds the steps away; the button opens them in a window.
-                var split = All(form).OfType<SplitContainer>().First(s => s.Orientation == Orientation.Horizontal && s.Panel1.Controls.OfType<Control>().Any(c => All(c).Contains(zipList)));
-                split.SplitterDistance = split.Height - 230;
-                await Task.Delay(400);
-                Check("short panel: steps folded, button says so", !notes.Parent!.Visible && Find(form, "설치 방법 보기...").Enabled);
-                Find(form, "설치 방법 보기...").PerformClick();
-                var window = await Window<Form>(form, f => f.Text == "설치 방법 - Old");
-                Check("window shows the steps", All(window).OfType<TextBox>().Single().Text.Contains("1. Step one"));
-                Find(window, "닫기").PerformClick();
-                await Task.Delay(200);
-                split.SplitterDistance = Math.Max(200, split.Height - 520);
-                await Task.Delay(400);
-                Check("tall panel: steps inline again", notes.Parent!.Visible && Find(form, "크게 보기...").Enabled);
+                // A mod just added asks for its address first.
+                using (var dialog = new ModInfoDialog("New 1.0.zip", new ModMeta(), new List<string>(), false, _ => { }, _ => { }))
+                {
+                    dialog.ShowInTaskbar = false;
+                    dialog.Show(form);
+                    await Task.Delay(400);
+                    var editor = All(dialog).OfType<ModInfoEditor>().Single();
+                    var address = All(editor).OfType<Label>().Single(l => l.Text == "주소");
+                    Check("address is the first field", editor.GetRow(address) == 1 && address.ForeColor == Theme.Info);
+                    Check("hint says what the address brings", Shows(dialog, "카테고리와 설치 방법을 자동으로"));
+                    var url = All(editor).OfType<TextBox>().First(b => !b.Multiline && b.MaxLength != 200);
+                    Check("address box has the focus", url.Focused);
+                    dialog.Close();
+                }
+
+                // Texts in other languages, and a missing one falling back to Korean.
+                L.Use("en");
+                Check("English text", L.T("설치") == "Install" && L.F("모드 {0}개 설치 완료", 3) == "Installed 3 mods" && L.T("없는 문장") == "없는 문장");
+                Check("every text has all three languages", L.All.Values.All(v => v.En.Length > 0 && v.Zh.Length > 0 && v.Ja.Length > 0));
+                L.Use("ko");
             }
             catch (Exception ex)
             {
@@ -234,6 +254,48 @@ static class UiChecks
             form.Close();
         };
 
+        Application.Run(form);
+        Console.WriteLine(failures == 0 ? "ALL PASSED" : $"{failures} FAILED");
+        return failures == 0 ? 0 : 1;
+    }
+
+    /// <summary>Draws the main window and the add dialog in a language, for looking at.</summary>
+    static int Pictures(string workDir, string language)
+    {
+        L.Use(language);
+        var manager = MakeGame(workDir, new StandIn());
+        var form = new MainForm(manager, Array.Empty<string>(), _ => { })
+        {
+            StartPosition = FormStartPosition.Manual,
+            ShowInTaskbar = false,
+            ClientSize = new Size(1280, 760),
+        };
+        void Save(Control c, string name)
+        {
+            using var bitmap = new Bitmap(c.Width, c.Height);
+            c.DrawToBitmap(bitmap, new Rectangle(Point.Empty, c.Size));
+            bitmap.Save(Path.Combine(workDir, $"{name}-{language}.png"));
+        }
+        form.Shown += async (_, _) =>
+        {
+            try
+            {
+                await Task.Delay(1500);
+                Save(form, "main");
+                using var dialog = new ModInfoDialog("New Mod 1.0.zip", new ModMeta(), new List<string>(), true, _ => { }, _ => { }, "UE4SS");
+                dialog.ShowInTaskbar = false;
+                dialog.Show(form);
+                await Task.Delay(500);
+                Save(dialog, "add");
+                dialog.Close();
+                Check("pictures drawn in " + language, true);
+            }
+            catch (Exception ex)
+            {
+                Check("pictures stopped: " + ex.Message, false);
+            }
+            form.Close();
+        };
         Application.Run(form);
         Console.WriteLine(failures == 0 ? "ALL PASSED" : $"{failures} FAILED");
         return failures == 0 ? 0 : 1;
