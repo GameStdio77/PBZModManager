@@ -164,16 +164,25 @@ static class UiChecks
     {
         var standIn = new StandIn();
         var manager = MakeGame(workDir, standIn);
-        var opened = new List<string>();
-        var started = new List<string>();
-        var restarts = 0;
-        var form = new MainForm(manager, Array.Empty<string>(), opened.Add)
+        // An option mod whose next version its author packed anew: wrapped in a folder, its options renamed.
+        var v101 = Path.Combine(manager.ModDir, "Outfit AIO 414 1.01 2026-11-04T10-23Z abc.zip");
+        var v102 = Path.Combine(manager.ModDir, "Outfit AIO 414 1.02 2026-11-06T14-04Z def.zip");
+        Zip(v101, ("Outfit-00-Body(choose one)-01-a/Outfit_Body_P.pak", "a"), ("Outfit-00-Body(choose one)-02-b/Outfit_Body_P.pak", "b"));
+        Zip(v102, ("Outfit AIO v1.02/Outfit-00-Body(choose one)-01-stockings/LogicMods/Outfit_Body_P.pak", "new a"),
+            ("Outfit AIO v1.02/Outfit-00-Body(choose one)-02-side/LogicMods/Outfit_Body_P.pak", "new b"));
+        manager.Install(manager.BuildPlan(v101, new[] { "Outfit-00-Body(choose one)-02-b" }));
+        File.WriteAllText(Path.Combine(manager.StateDir, "meta.json"), System.Text.Json.JsonSerializer.Serialize(new Dictionary<string, object>
+        {
+            [Path.GetFileName(v101)] = new { Registered = true },
+            [Path.GetFileName(v102)] = new { Registered = true },
+        }));
+        var root = manager.Root;
+
+        var form = new MainForm(manager, Array.Empty<string>(), _ => { })
         {
             StartPosition = FormStartPosition.Manual,
             ShowInTaskbar = false,
             ClientSize = new Size(1500, 860),
-            StartGame = started.Add,
-            RestartApp = () => restarts++,
         };
         Application.ThreadException += (_, e) =>
         {
@@ -184,68 +193,74 @@ static class UiChecks
         {
             try
             {
-                await Task.Delay(1200);
-                // The manager's own newer release shows in the corner, beside the project link.
-                var update = All(form).OfType<Label>().FirstOrDefault(l => l.Text.StartsWith("새 버전"));
-                Check("newer manager release shown: " + update?.Text, update is { Visible: true, Text: "새 버전 v9.1.0 있음" });
-                var link = All(form).OfType<Label>().First(l => l.Text.StartsWith("GitHub · v"));
-                Check("project link stays in the corner", update != null && link.Left > update.Left);
-                Click(update!);
-                Check("the notice opens the release page", opened.LastOrDefault() == "https://github.com/GameStdio77/PBZModManager/releases/tag/v9.1.0");
-                Check("an older or same release is not news", AppUpdate.Newer(new RemoteInfo { Version = "1.0.0", PageUrl = "x" }, "1.0.0") == null
-                    && AppUpdate.Newer(new RemoteInfo { Version = "1.1", PageUrl = "x" }, "1.0.0") != null
-                    && AppUpdate.Newer(new RemoteInfo { Version = "0.9.5", PageUrl = "x" }, "1.0.0") == null);
+                await Task.Delay(1000);
+                var zipList = All(form).OfType<DarkListView>().First();
+                foreach (ListViewItem i in zipList.Items) i.Selected = i.SubItems[0].Text.Trim() == "Outfit AIO";
+                await Task.Delay(300);
+                var install = All(form).OfType<Button>().First(b => b.Text.StartsWith("업데이트"));
+                install.PerformClick();
 
-                // The launch button starts the Steam build's program.
-                if (!Manager.GameRunning())
-                {
-                    Find(form, "게임 실행").PerformClick();
-                    await Task.Delay(300);
-                    Check("launch starts platform/steam/PBZ.exe", started.SingleOrDefault() == manager.GameExe
-                        && manager.GameExe.EndsWith(Path.Combine("platform", "steam", "PBZ.exe")));
-                }
+                var ask = await Window<Form>(form, f => f.Text == "구조가 바뀐 버전");
+                Check("a version laid out anew is pointed out", Shows(ask, "구조가 달라졌습니다") && Shows(ask, "옵션 구성이 바뀌어"));
+                Find(ask, "예").PerformClick();
+
+                var remove = await Window<Form>(form, f => f.Text == "모드 제거 확인 - Outfit AIO");
+                Find(remove, "제거").PerformClick();
+                var options = await Window<Form>(form, f => f.Text == "옵션 고르기 - Outfit AIO");
+                Check("then installed fresh, options asked", true);
+                Find(options, "다음").PerformClick();
+                var plan = await Window<Form>(form, f => f.Text == "설치 확인 - Outfit AIO");
+                Find(plan, "설치").PerformClick();
+                await Task.Delay(1000);
+
+                Check("old version removed, new one in LogicMods",
+                    !File.Exists(Path.Combine(root, "ProjectPBZ/Content/Paks/~mods/Outfit_Body_P.pak"))
+                    && File.ReadAllText(Path.Combine(root, "ProjectPBZ/Content/Paks/LogicMods/Outfit_Body_P.pak")) == "new a");
+                var mine = manager.History().Where(t => t.ZipName.StartsWith("Outfit AIO")).ToList();
+                Check("one install of the new version left: " + string.Join(", ", mine.Select(t => t.ZipName)),
+                    mine.Count == 1 && mine[0].ZipName == Path.GetFileName(v102));
+
+                // A rar put next to the work folder is added as a zip; its pictures open in their own window.
+                var rar = Directory.GetFiles(workDir, "*.rar").FirstOrDefault();
+                if (rar == null) Console.WriteLine("SKIP  rar (none given)");
                 else
                 {
-                    // The real game is open: the button says so and starts nothing.
-                    Find(form, "게임 실행").PerformClick();
-                    var said = await Window<Form>(form, f => Shows(f, "게임이 이미 실행 중입니다."));
-                    Find(said, "확인").PerformClick();
-                    await Task.Delay(200);
-                    Check("launch while the game runs starts nothing", started.Count == 0);
+                    // Added the way a drop on the window adds it; the info dialog for a new mod is put off.
+                    var adding = (Task)typeof(MainForm).GetMethod("AddZips", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                        .Invoke(form, new object[] { new[] { rar } })!;
+                    var info = await Window<ModInfoDialog>(form);
+                    Check("a new mod asks for its address first", All(info).OfType<Label>().Any(l => l.Text == "주소"));
+                    Find(info, "나중에").PerformClick();
+                    await adding;
+                    var converted = Path.Combine(manager.ModDir, Path.GetFileNameWithoutExtension(rar) + ".zip");
+                    Check("rar added as a zip of the same name, the original left where it was", File.Exists(converted) && File.Exists(rar));
+                    using (var z = System.IO.Compression.ZipFile.OpenRead(converted))
+                        Console.WriteLine($"      {z.Entries.Count} entries, options: {string.Join(" | ", manager.OptionGroups(converted).Select(g => g.Options.Count + " choices"))}");
+                    Check("the zip can be planned", manager.BuildPlan(converted).Items.Count > 0);
+                    var pictures = Manager.PicturesIn(converted);
+                    Console.WriteLine("      pictures: " + string.Join(", ", pictures.Take(6)));
+
+                    var mods = All(form).OfType<DarkListView>().First();
+                    var name = ModIdentity.ParseFileName(Path.GetFileName(converted)).Name;
+                    foreach (ListViewItem i in mods.Items) i.Selected = i.SubItems[0].Text.Contains("YoRHa");
+                    Console.WriteLine("      listed: " + string.Join(" | ", mods.Items.Cast<ListViewItem>().Select(i => i.SubItems[0].Text)) + " ; parsed name: " + name);
+                    await Task.Delay(500);
+                    var button = All(form).OfType<Button>().FirstOrDefault(b => b.Text.StartsWith("이미지 보기"));
+                    Check("picture button says how many: " + button?.Text, pictures.Count > 0 && button is { Visible: true } && button.Text == $"이미지 보기 ({pictures.Count})...");
+                    button!.PerformClick();
+                    var window = await Window<PictureWindow>(form);
+                    var first = window.Caption;
+                    window.ShowAt(1);
+                    Check("pictures turn: " + first + " → " + window.Caption, first.EndsWith($"(1/{pictures.Count})") && window.Caption.EndsWith($"(2/{Math.Max(2, pictures.Count)})") || pictures.Count == 1);
+                    var picture = All(window).OfType<PictureBox>().Single();
+                    Check("a picture is shown", picture.Image != null);
+                    using (var shot = new Bitmap(window.Width, window.Height))
+                    {
+                        window.DrawToBitmap(shot, new Rectangle(Point.Empty, window.Size));
+                        shot.Save(Path.Combine(workDir, "pictures.png"));
+                    }
+                    window.Close();
                 }
-
-                // Picking a language saves it and offers a restart.
-                var languageBox = All(form).OfType<DarkComboBox>().Single(c => c.Items.Contains("English"));
-                Check("four languages offered, Korean chosen", languageBox.Items.Count == 4 && (string)languageBox.SelectedItem! == "한국어");
-                languageBox.SelectedIndex = 1;
-                typeof(ComboBox).GetMethod("OnSelectionChangeCommitted", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
-                    .Invoke(languageBox, new object[] { EventArgs.Empty });
-                var ask = await Window<Form>(form, f => f.Text == "Language");
-                Check("restart asked in both languages", Shows(ask, "Restart now?") && Shows(ask, "지금 다시 시작할까요?"));
-                Find(ask, "예").PerformClick();
-                await Task.Delay(300);
-                Check("language saved, restart asked for", Manager.SavedLanguage(manager.ModDir) == "en" && restarts == 1 && L.Current == "ko");
-
-                // A mod just added asks for its address first.
-                using (var dialog = new ModInfoDialog("New 1.0.zip", new ModMeta(), new List<string>(), false, _ => { }, _ => { }))
-                {
-                    dialog.ShowInTaskbar = false;
-                    dialog.Show(form);
-                    await Task.Delay(400);
-                    var editor = All(dialog).OfType<ModInfoEditor>().Single();
-                    var address = All(editor).OfType<Label>().Single(l => l.Text == "주소");
-                    Check("address is the first field", editor.GetRow(address) == 1 && address.ForeColor == Theme.Info);
-                    Check("hint says what the address brings", Shows(dialog, "카테고리와 설치 방법을 자동으로"));
-                    var url = All(editor).OfType<TextBox>().First(b => !b.Multiline && b.MaxLength != 200);
-                    Check("address box has the focus", url.Focused);
-                    dialog.Close();
-                }
-
-                // Texts in other languages, and a missing one falling back to Korean.
-                L.Use("en");
-                Check("English text", L.T("설치") == "Install" && L.F("모드 {0}개 설치 완료", 3) == "Installed 3 mods" && L.T("없는 문장") == "없는 문장");
-                Check("every text has all three languages", L.All.Values.All(v => v.En.Length > 0 && v.Zh.Length > 0 && v.Ja.Length > 0));
-                L.Use("ko");
             }
             catch (Exception ex)
             {

@@ -11,4 +11,7 @@
     <Compile Include="..\Lang.cs" Link="Lang.cs" />
     <Compile Include="..\LangTable.cs" Link="LangTable.cs" />
   </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="SharpCompress" Version="0.38.0" />
+  </ItemGroup>
 </Project>

@@ -16,4 +16,7 @@
     <Compile Include="..\MainForm.cs" Link="MainForm.cs" />
     <Compile Include="..\AppConfig.cs" Link="AppConfig.cs" />
   </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="SharpCompress" Version="0.38.0" />
+  </ItemGroup>
 </Project>

@@ -99,6 +99,22 @@ public static class LooseLayout
 
     static bool IsPak(string path) => PakTypes.Contains(Path.GetExtension(path), StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// Takes off one folder that wraps a whole archive of loose mod files, such as "SoulVerR AIO v1.02/":
+    /// options are told apart by the folders right inside it, and pictures and presets are found at the top.
+    /// A wrapper is only taken off when pak files are inside it, and never when it is a UE4SS mod's own folder.
+    /// </summary>
+    public static Func<string, string> Unwrapper(IReadOnlyCollection<string> files)
+    {
+        static string Same(string p) => p;
+        if (files.Count == 0 || files.Any(f => !f.Contains('/'))) return Same;
+        var top = files.First()[..(files.First().IndexOf('/') + 1)];
+        if (InGameLayout(top) || files.Any(f => !f.StartsWith(top, StringComparison.OrdinalIgnoreCase))) return Same;
+        var inside = files.Select(f => f[top.Length..]).ToList();
+        if (!inside.Any(f => !InGameLayout(f) && IsPak(f)) || inside.Any(f => f.StartsWith("Scripts/", StringComparison.OrdinalIgnoreCase))) return Same;
+        return p => p.StartsWith(top, StringComparison.OrdinalIgnoreCase) ? p[top.Length..] : p;
+    }
+
     /// <summary>Folders holding a UE4SS mod (its Scripts/main.lua), as folder path ending in a slash → the mod's name.</summary>
     static Dictionary<string, string> Ue4ssModFolders(IEnumerable<string> files)
     {
@@ -165,8 +181,15 @@ public static class LooseLayout
             foreach (var (folder, name) in modFolders)
                 if (path.StartsWith(folder, StringComparison.OrdinalIgnoreCase))
                     return (Ue4ssModsHome + name + "/" + path[folder.Length..], Placement.Ue4ssMod);
-            if (BesideExeFolders.FirstOrDefault(f => path.StartsWith(f, StringComparison.OrdinalIgnoreCase)) is not null)
-                return (ModIdentity.Ue4ssHome + path, Placement.BesideExe);
+            if (BesideExeFolders.FirstOrDefault(f => path.StartsWith(f, StringComparison.OrdinalIgnoreCase)) is { } beside)
+            {
+                // Some archives lay the folder out again inside it: "UUEPBS Presets/platform/steam/UUEPBS Presets/x.json".
+                var rest = path[beside.Length..];
+                if (InGameLayout(rest)) return (rest, Placement.BesideExe);
+                if (rest.Length == 0 || !files.Any(f => f.StartsWith(beside + "platform/", StringComparison.OrdinalIgnoreCase)))
+                    return (ModIdentity.Ue4ssHome + path, Placement.BesideExe);
+                return (null, Placement.FolderLeftOut);
+            }
 
             var isDir = path.EndsWith('/');
             // Blueprint mods are read from LogicMods by UE4SS's loader; other paks from ~mods.
@@ -513,10 +536,10 @@ public static class NexusApi
     {
         var client = handlerForChecks != null ? new HttpClient(handlerForChecks, false) : new HttpClient();
         client.Timeout = TimeSpan.FromSeconds(20);
-        client.DefaultRequestHeaders.Add("User-Agent", "PBZModManager/1.1");
+        client.DefaultRequestHeaders.Add("User-Agent", "PBZModManager/1.2");
         // Nexus's API policy asks every client to identify itself with these two.
         client.DefaultRequestHeaders.Add("Application-Name", "PBZModManager");
-        client.DefaultRequestHeaders.Add("Application-Version", "1.1.0");
+        client.DefaultRequestHeaders.Add("Application-Version", "1.2.0");
         return client;
     }
 
@@ -1253,11 +1276,18 @@ public sealed class Manager
 
     /// <summary>Validates an archive and makes sure it is in the MOD folder, copying it there if needed.</summary>
     /// <returns>The archive's path in the MOD folder.</returns>
-    public string AddZip(string source)
+    /// <summary>Archive types taken besides zip. They are turned into a zip when added, and everything after works on that.</summary>
+    public static readonly string[] OtherArchiveTypes = { ".rar", ".7z" };
+
+    public static bool CanAdd(string path) =>
+        Path.GetExtension(path).Equals(".zip", StringComparison.OrdinalIgnoreCase) || OtherArchiveTypes.Contains(Path.GetExtension(path), StringComparer.OrdinalIgnoreCase);
+
+    public string AddZip(string source, Action<string>? progress = null)
     {
         var full = Path.GetFullPath(source);
-        if (!File.Exists(full) || !Path.GetExtension(full).Equals(".zip", StringComparison.OrdinalIgnoreCase))
-            throw new InvalidOperationException(L.F("zip 파일만 추가할 수 있습니다: {0}", Path.GetFileName(full)));
+        if (!File.Exists(full) || !CanAdd(full))
+            throw new InvalidOperationException(L.F("zip, rar, 7z 파일만 추가할 수 있습니다: {0}", Path.GetFileName(full)));
+        if (!Path.GetExtension(full).Equals(".zip", StringComparison.OrdinalIgnoreCase)) return AddConverted(full, progress);
         try
         {
             using var zip = ZipFile.OpenRead(full);
@@ -1287,6 +1317,77 @@ public sealed class Manager
         File.Move(tmp, dest);
         return dest;
     }
+
+    /// <summary>
+    /// Writes a rar or 7z archive's files into a zip of the same name in the mod folder. A rar left in the
+    /// mod folder itself then goes to the Recycle Bin, so the folder does not hold the mod twice.
+    /// </summary>
+    string AddConverted(string full, Action<string>? progress)
+    {
+        var dest = Path.Combine(ModDir, Path.GetFileNameWithoutExtension(full) + ".zip");
+        if (!File.Exists(dest))
+        {
+            var tmp = NewTmpPath();
+            try
+            {
+                using (var archive = SharpCompress.Archives.ArchiveFactory.Open(full))
+                using (var zip = ZipFile.Open(tmp, ZipArchiveMode.Create))
+                {
+                    var total = archive.Entries.Count(e => !e.IsDirectory);
+                    var done = 0;
+                    // Read in order: a solid rar can only be unpacked from the start.
+                    using var reader = archive.ExtractAllEntries();
+                    while (reader.MoveToNextEntry())
+                    {
+                        var name = (reader.Entry.Key ?? "").Replace('\\', '/');
+                        if (name.Length == 0) continue;
+                        if (reader.Entry.IsDirectory)
+                        {
+                            zip.CreateEntry(name.TrimEnd('/') + "/");
+                            continue;
+                        }
+                        progress?.Invoke(L.F("압축 형식 바꾸는 중... {0}/{1}", ++done, total));
+                        var entry = zip.CreateEntry(name, CompressionLevel.Fastest);
+                        if (reader.Entry.LastModifiedTime is { Year: >= 1980 and < 2108 } time) entry.LastWriteTime = time;
+                        using var stream = entry.Open();
+                        reader.WriteEntryTo(stream);
+                    }
+                }
+                File.Move(tmp, dest);
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                // The library reports damaged, unsupported or locked archives in many ways; each means the same here.
+                try { File.Delete(tmp); } catch (IOException) { }
+                throw new InvalidOperationException(L.F("압축 파일을 읽지 못했습니다: {0}\n{1}", Path.GetFileName(full), ex.Message), ex);
+            }
+        }
+        if (string.Equals(Path.GetDirectoryName(full), ModDir, StringComparison.OrdinalIgnoreCase))
+            SendToRecycleBin(full);
+        return dest;
+    }
+
+    /// <summary>The pictures in an archive (its preview images, usually), by entry name in archive order.</summary>
+    public static List<string> PicturesIn(string zipPath)
+    {
+        try
+        {
+            using var zip = ZipFile.OpenRead(zipPath);
+            return zip.Entries.Where(e => e.Length > 0 && PictureTypes.Contains(Path.GetExtension(e.FullName), StringComparer.OrdinalIgnoreCase))
+                .Select(e => e.FullName).OrderBy(n => n, Comparer<string>.Create(StrCmpLogicalW)).ToList();
+        }
+        catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException)
+        {
+            return new List<string>();
+        }
+    }
+
+    /// <summary>Compares names the way Explorer sorts them: "(2)" before "(11)".</summary>
+    [System.Runtime.InteropServices.DllImport("shlwapi.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+    static extern int StrCmpLogicalW(string a, string b);
+
+    /// <summary>Picture types Windows can show without help.</summary>
+    public static readonly string[] PictureTypes = { ".jpg", ".jpeg", ".png", ".gif", ".bmp" };
 
     /// <summary>Installed transactions, oldest first.</summary>
     public List<Tx> History()
@@ -1709,6 +1810,9 @@ public sealed class Manager
     (List<Laid> Entries, List<OptionGroup> Options, List<string> Chosen) LayOut(ZipArchive zip, IReadOnlyCollection<string>? chosen, IReadOnlyCollection<string>? excluded = null)
     {
         var entries = zip.Entries.Select(e => (Entry: e, Rel: NormalizeEntryPath(e.FullName), IsDir: e.FullName.EndsWith('/') || e.FullName.EndsWith('\\'))).ToList();
+        var unwrap = LooseLayout.Unwrapper(entries.Where(e => !e.IsDir).Select(e => e.Rel).ToList());
+        // The wrapping folder itself is not installed; what is inside it is laid out as if it were the top.
+        entries = entries.Select(e => (e.Entry, Rel: e.IsDir ? unwrap(e.Rel + "/").TrimEnd('/') : unwrap(e.Rel), e.IsDir)).ToList();
         var files = entries.Where(e => !e.IsDir).Select(e => e.Rel).ToList();
 
         var package = Ue4ssPackagePlacement(files);
@@ -1728,6 +1832,7 @@ public sealed class Manager
 
         var laid = entries.Select(e =>
         {
+            if (e.Rel.Length == 0) return new Laid(e.Entry, e.Rel, e.IsDir, Placement.FolderLeftOut);
             var start = package(e.IsDir ? e.Rel + "/" : e.Rel);
             var (path, kind) = loose(start);
             if (path == null) return new Laid(e.Entry, e.Rel, e.IsDir, kind);
@@ -1754,6 +1859,33 @@ public sealed class Manager
         var key = ModIdentity.KeyOfZip(zipPath);
         return History().LastOrDefault(t => t.Options.Count > 0 && ModIdentity.KeyOfTx(t).Equals(key, StringComparison.OrdinalIgnoreCase))?.Options
             ?? new List<string>();
+    }
+
+    /// <summary>
+    /// Why this archive should go in after the installed version of its mod is removed, rather than over it:
+    /// its author laid it out anew, so the old options do not carry over or most old files sit elsewhere.
+    /// Null when it updates over the installed version as usual, or when the mod is not installed.
+    /// </summary>
+    public string? LayoutChange(string zipPath)
+    {
+        var key = ModIdentity.KeyOfZip(zipPath);
+        var mine = History().Where(t => t.State == Tx.Installed && ModIdentity.KeyOfTx(t).Equals(key, StringComparison.OrdinalIgnoreCase)).ToList();
+        if (mine.Count == 0 || mine[^1].ZipName.Equals(Path.GetFileName(zipPath), StringComparison.OrdinalIgnoreCase)) return null;
+
+        using var zip = ZipFile.OpenRead(zipPath);
+        var (laid, options, _) = LayOut(zip, null);
+        var previous = PreviousOptions(zipPath);
+        if (previous.Count > 0 && options.Count > 0
+            && !options.SelectMany(g => g.Options).Any(o => previous.Contains(o.Folder, StringComparer.OrdinalIgnoreCase)))
+            return L.T("옵션 구성이 바뀌어 이전에 고른 옵션을 이어받을 수 없습니다.");
+
+        // Any option of a set lands on the same paths, so the first ones stand for all.
+        var targets = laid.Where(l => !l.IsDir && !l.LeftOut).Select(l => l.Path).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var old = mine.SelectMany(t => t.Files).Where(f => !f.Deleted).Select(f => f.Path).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var moved = old.Count(p => !targets.Contains(p));
+        return old.Count > 0 && moved * 2 >= old.Count
+            ? L.F("설치 위치가 바뀌어 이전 버전 파일 {0}개 중 {1}개가 새 버전에 없습니다.", old.Count, moved)
+            : null;
     }
 
     /// <summary>The files the mod's last install left out, offered unticked again so an update keeps the choice.</summary>

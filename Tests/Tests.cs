@@ -956,6 +956,42 @@ Test("menu layout: real archives", root =>
     }
 });
 
+Test("loose layout: a whole archive wrapped in one folder updates an option mod", root =>
+{
+    var m = new Manager(root);
+    var v101 = Zip(root, "Outfit AIO 414 1.01 2026-11-04T10-23Z abc.zip",
+        ("Outfit-00-Body(choose one)-01-a/Outfit_Body_P.pak", "body a"), ("Outfit-00-Body(choose one)-02-b/Outfit_Body_P.pak", "body b"),
+        ("UUEPBS Presets/Default.json", "old"));
+    m.Install(m.BuildPlan(v101, new[] { "Outfit-00-Body(choose one)-02-b" }));
+
+    // 1.02 as its author packed it: one folder around everything, LogicMods inside each option, presets laid out again.
+    var v102 = Zip(root, "Outfit AIO 414 1.02 2026-11-06T14-04Z def.zip",
+        ("Outfit AIO v1.02/", ""), ("Outfit AIO v1.02/00-leg options.jpg", "img"),
+        ("Outfit AIO v1.02/Outfit-00-Body(choose one)-01-stockings/LogicMods/Outfit_Body_P.pak", "new a"),
+        ("Outfit AIO v1.02/Outfit-00-Body(choose one)-02-side/LogicMods/Outfit_Body_P.pak", "new b"),
+        ("Outfit AIO v1.02/Outfit-00-Body(choose one)-03-bare/LogicMods/Outfit_Body_P.pak", "new c"),
+        ("Outfit AIO v1.02/UUEPBS Presets/", ""), ("Outfit AIO v1.02/UUEPBS Presets/platform/steam/UUEPBS Presets/Default.json", "new"));
+    Check(m.LayoutChange(v102) is { } why && why.Contains("옵션 구성이 바뀌어"), "a version laid out anew is told apart: " + m.LayoutChange(v102));
+    Check(m.LayoutChange(v101) == null, "the installed version itself is no change");
+    var v103 = Zip(root, "Outfit AIO 414 1.03 2026-11-07T14-04Z ghi.zip",
+        ("Outfit-00-Body(choose one)-01-a/Outfit_Body_P.pak", "a3"), ("Outfit-00-Body(choose one)-02-b/Outfit_Body_P.pak", "b3"),
+        ("UUEPBS Presets/Default.json", "3"));
+    Check(m.LayoutChange(v103) == null, "an ordinary update is no change");
+    var groups = m.OptionGroups(v102);
+    Check(groups.Count == 1 && groups[0].Options.Count == 3 && groups[0].Options[1].Folder == "Outfit-00-Body(choose one)-02-side",
+        "the options inside the wrapping folder are found: " + string.Join(" | ", groups.SelectMany(g => g.Options).Select(o => o.Folder)));
+    var plan = m.BuildPlan(v102, new[] { "Outfit-00-Body(choose one)-02-side" });
+    var paths = plan.Items.Select(i => i.Path).OrderBy(p => p).ToList();
+    Check(paths.SequenceEqual(new[] { "platform/steam/UUEPBS Presets/Default.json", "ProjectPBZ/Content/Paks/LogicMods/Outfit_Body_P.pak" }.OrderBy(p => p)),
+        "the picked option goes to LogicMods, presets beside the game: " + string.Join(", ", paths));
+    Check(plan.Stale.Any(s => s.Path == "ProjectPBZ/Content/Paks/~mods/Outfit_Body_P.pak") && plan.ReplacesZip != null, "the old ~mods file goes with the update");
+    Check(plan.NewDirs.All(d => !d.Contains("v1.02") && !d.Contains("choose one")), "no wrapping or option folders are made: " + string.Join(", ", plan.NewDirs));
+    m.Install(plan);
+    Check(File.ReadAllText(Path.Combine(root, "ProjectPBZ/Content/Paks/LogicMods/Outfit_Body_P.pak")) == "new b"
+        && !File.Exists(Path.Combine(root, "ProjectPBZ/Content/Paks/~mods/Outfit_Body_P.pak"))
+        && File.ReadAllText(Path.Combine(root, "platform/steam/UUEPBS Presets/Default.json")) == "new", "updated in place");
+});
+
 Test("loose layout: options, paks, a UE4SS mod and its presets", root =>
 {
     var before = Snapshot(root);

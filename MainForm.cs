@@ -222,6 +222,11 @@ public sealed class MainForm : Form, IMessageFilter
         clearLeftoversButton.Click += async (_, _) => { await Task.Yield(); await ClearLeftovers(); };
         filterBox.SelectionChangeCommitted += (_, _) => RenderZips();
         infoEditor.Edited += NoteEdited;
+        infoEditor.PicturesRequested += async () =>
+        {
+            await Task.Yield();
+            if (SelectedMod() is { } mod && (ChosenVersion() ?? mod.Latest) is { Missing: false } shown) PictureWindow.Show(this, mod.Name, shown.Path);
+        };
         infoEditor.CategoryFound += category =>
         {
             RememberCategory(category);
@@ -289,7 +294,7 @@ public sealed class MainForm : Form, IMessageFilter
         using var dialog = new OpenFileDialog
         {
             Title = L.T("추가할 모드 압축 파일 선택"),
-            Filter = L.T("ZIP 압축 파일 (*.zip)|*.zip"),
+            Filter = L.T("모드 압축 파일 (*.zip, *.rar, *.7z)|*.zip;*.rar;*.7z"),
             Multiselect = true,
         };
         if (dialog.ShowDialog(this) == DialogResult.OK) await AddZips(dialog.FileNames);
@@ -297,13 +302,13 @@ public sealed class MainForm : Form, IMessageFilter
 
     async Task AddZips(string[] sources)
     {
-        var added = await Run(L.T("압축 파일 추가 중..."), _ =>
+        var added = await Run(L.T("압축 파일 추가 중..."), progress =>
         {
             var paths = new List<string>();
             var errors = new List<string>();
             foreach (var source in sources)
             {
-                try { paths.Add(manager.AddZip(source)); }
+                try { paths.Add(manager.AddZip(source, progress)); }
                 catch (Exception ex) when (ex is InvalidOperationException or IOException or UnauthorizedAccessException) { errors.Add(ex.Message); }
             }
             return (Paths: paths, Errors: errors);
@@ -527,6 +532,7 @@ public sealed class MainForm : Form, IMessageFilter
         // The tool is the shown version's own, not shared across versions like the rest.
         var view = new ModMeta { Category = note.Category, Url = note.Url, Memo = note.Memo, InstallNotes = note.InstallNotes, Registered = note.Registered, Tool = shown == null ? "" : meta.GetValueOrDefault(shown.FileName)?.Tool ?? "" };
         infoEditor.Show(mod?.Name ?? L.T("모드를 선택하세요"), view, mod != null, shown?.Tool ?? "");
+        infoEditor.SetPictureCount(shown is { Missing: false } ? Manager.PicturesIn(shown.Path).Count : 0);
     }
 
     /// <summary>The tool a version is made for: what the user set for it, or else what its archive holds.</summary>
@@ -1040,6 +1046,29 @@ public sealed class MainForm : Form, IMessageFilter
     /// <param name="action">The name of the step, when it is not the usual install, update or reinstall.</param>
     async Task InstallVersion(ModGroup mod, ModVersion version, string? action = null)
     {
+        // A version laid out anew goes in best on its own: the old one is removed first, if the user agrees.
+        if (action == null && mod.InstalledFile != null)
+        {
+            var change = await Run(L.T("압축 파일 확인 중..."), _ => Tuple.Create(manager.LayoutChange(version.Path)));
+            if (change == null) return;
+            if (change.Item1 is { } why && installed.FirstOrDefault(i => i.Key.Equals(mod.Key, StringComparison.OrdinalIgnoreCase)) is { } current)
+            {
+                var answer = DarkDialog.Show(this,
+                    L.F("{0}의 이 버전은 이전 버전과 구조가 달라졌습니다.\n{1}\n\n이전 버전을 먼저 제거한 뒤 새로 설치하는 것을 권합니다. 지금 제거하고 설치할까요?\n(아니요: 이전 버전 위에 그대로 업데이트)", mod.Name, why),
+                    L.T("구조가 바뀐 버전"), yesNo: true);
+                if (answer == DialogResult.Yes)
+                {
+                    await RemoveMods(new[] { current });
+                    if (installed.Any(i => i.Key.Equals(mod.Key, StringComparison.OrdinalIgnoreCase))) return;
+                    // The lists were read again; carry on with the same file as a fresh install.
+                    var fresh = mods.FirstOrDefault(m => m.Versions.Any(v => v.Path == version.Path));
+                    if (fresh == null) return;
+                    await InstallVersion(fresh, fresh.Versions.First(v => v.Path == version.Path));
+                    return;
+                }
+            }
+        }
+
         var groups = await Run(L.T("압축 파일 확인 중..."), _ => manager.OptionGroups(version.Path));
         if (groups == null) return;
         if (action != null && groups.Count == 0)

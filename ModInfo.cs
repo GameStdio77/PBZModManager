@@ -17,6 +17,8 @@ public sealed class ModInfoEditor : TableLayoutPanel
     readonly TextBox notesBox = Theme.TextBox(multiline: true);
     readonly Button refetchButton = Theme.Button(L.T("다시 가져오기"));
     readonly Button showNotesButton = Theme.Button(L.T("크게 보기..."));
+    /// <summary>Opens the archive's pictures; shown only when the archive has some.</summary>
+    readonly Button picturesButton = Theme.Button(L.T("이미지 보기..."));
     readonly Panel notesField;
     /// <summary>Below this height the steps are not worth showing inline; the button opens them in a window.</summary>
     const int NotesMinHeight = 70;
@@ -33,6 +35,7 @@ public sealed class ModInfoEditor : TableLayoutPanel
     /// <summary>The user picked another entry in the version list. Gives its index.</summary>
     public event Action<int>? VersionChosen;
     public event Action? DownloadRequested;
+    public event Action? PicturesRequested;
     /// <summary>An entered address gave a category, and none was chosen. Gives its name.</summary>
     public event Action<string>? CategoryFound;
 
@@ -127,6 +130,11 @@ public sealed class ModInfoEditor : TableLayoutPanel
         refetchButton.Dock = DockStyle.Right;
         showNotesButton.Dock = DockStyle.Right;
         notesHeader.Controls.Add(new Label { Text = L.T("설치 방법 (Nexus 설명에서 가져옴)"), AutoSize = true, ForeColor = Theme.Muted, Dock = DockStyle.Left, Padding = new Padding(0, 6, 0, 0) });
+        picturesButton.Dock = DockStyle.Right;
+        picturesButton.Visible = false;
+        picturesButton.Click += (_, _) => PicturesRequested?.Invoke();
+        notesHeader.Controls.Add(picturesButton);
+        notesHeader.Controls.Add(new Panel { Dock = DockStyle.Right, Width = 6 });
         notesHeader.Controls.Add(showNotesButton);
         notesHeader.Controls.Add(new Panel { Dock = DockStyle.Right, Width = 6 });
         notesHeader.Controls.Add(refetchButton);
@@ -251,6 +259,13 @@ public sealed class ModInfoEditor : TableLayoutPanel
         refetchButton.Enabled = editable && NexusApi.LinkFor(urlBox.Text, Array.Empty<string>()) != null;
     }
 
+    /// <summary>How many pictures the shown version's archive holds; none hides the button.</summary>
+    public void SetPictureCount(int count)
+    {
+        picturesButton.Visible = count > 0;
+        picturesButton.Text = L.F("이미지 보기 ({0})...", count);
+    }
+
     public void FocusFirstField()
     {
         if (addressFirst) urlBox.Select();
@@ -345,6 +360,103 @@ public static class NotesWindow
         form.Controls.Add(bar);
         form.Shown += (_, _) => { box.SelectionStart = 0; box.SelectionLength = 0; close.Focus(); };
         form.ShowDialog(owner);
+    }
+}
+
+/// <summary>The pictures inside a mod's archive, one at a time: buttons, arrow keys or a click on either half turn them.</summary>
+public sealed class PictureWindow : Form
+{
+    readonly System.IO.Compression.ZipArchive zip;
+    readonly List<string> names;
+    readonly PictureBox picture = new() { Dock = DockStyle.Fill, SizeMode = PictureBoxSizeMode.Zoom, BackColor = Theme.Background, Cursor = Cursors.Hand };
+    readonly Label caption = new() { Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleCenter, ForeColor = Theme.Muted, AutoEllipsis = true };
+    readonly Button previous = Theme.Button(L.T("◀ 이전"));
+    readonly Button next = Theme.Button(L.T("다음 ▶"));
+    int index;
+
+    public string Caption => caption.Text;
+
+    PictureWindow(string modName, string zipPath, List<string> names)
+    {
+        this.names = names;
+        zip = System.IO.Compression.ZipFile.OpenRead(zipPath);
+        Text = L.F("미리보기 이미지 - {0}", modName);
+        Theme.Apply(this);
+        ClientSize = new Size(1100, 760);
+        MinimumSize = new Size(480, 360);
+        StartPosition = FormStartPosition.CenterParent;
+        ShowInTaskbar = false;
+        MinimizeBox = false;
+
+        var close = Theme.Button(L.T("닫기"), primary: true);
+        close.DialogResult = DialogResult.OK;
+        CancelButton = close;
+        var bar = new TableLayoutPanel { Dock = DockStyle.Bottom, ColumnCount = 4, Height = Theme.ControlHeight + 16, Padding = new Padding(8) };
+        bar.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        bar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        bar.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        bar.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        foreach (var b in new[] { previous, next, close }) b.Margin = new Padding(0, 0, 6, 0);
+        bar.Controls.Add(previous, 0, 0);
+        bar.Controls.Add(caption, 1, 0);
+        bar.Controls.Add(next, 2, 0);
+        bar.Controls.Add(close, 3, 0);
+        var body = new Panel { Dock = DockStyle.Fill, Padding = new Padding(8, 8, 8, 0) };
+        body.Controls.Add(picture);
+        Controls.Add(body);
+        Controls.Add(bar);
+
+        previous.Click += (_, _) => ShowAt(index - 1);
+        next.Click += (_, _) => ShowAt(index + 1);
+        picture.MouseClick += (_, e) => ShowAt(e.X < picture.Width / 2 ? index - 1 : index + 1);
+        previous.Enabled = next.Enabled = names.Count > 1;
+        FormClosed += (_, _) =>
+        {
+            picture.Image?.Dispose();
+            zip.Dispose();
+        };
+        ShowAt(0);
+    }
+
+    public static void Show(IWin32Window? owner, string modName, string zipPath)
+    {
+        var names = Manager.PicturesIn(zipPath);
+        if (names.Count == 0) return;
+        using var form = new PictureWindow(modName, zipPath, names);
+        form.ShowDialog(owner);
+    }
+
+    /// <summary>Turns to a picture; past either end it wraps around.</summary>
+    public void ShowAt(int at)
+    {
+        index = (at % names.Count + names.Count) % names.Count;
+        var old = picture.Image;
+        try
+        {
+            using var stream = zip.GetEntry(names[index])!.Open();
+            using var copy = new MemoryStream();
+            stream.CopyTo(copy);
+            copy.Position = 0;
+            using var image = Image.FromStream(copy);
+            picture.Image = new Bitmap(image);
+            caption.Text = $"{Path.GetFileName(names[index])}  ({index + 1}/{names.Count})";
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidDataException or IOException or OutOfMemoryException)
+        {
+            picture.Image = null;
+            caption.Text = L.F("열 수 없는 이미지입니다: {0}", Path.GetFileName(names[index])) + $"  ({index + 1}/{names.Count})";
+        }
+        old?.Dispose();
+    }
+
+    protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
+    {
+        if (keyData is Keys.Left or Keys.Right)
+        {
+            ShowAt(keyData == Keys.Left ? index - 1 : index + 1);
+            return true;
+        }
+        return base.ProcessCmdKey(ref msg, keyData);
     }
 }
 
