@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\Core.cs" Link="Core.cs" />
+    <Compile Include="..\Theme.cs" Link="Theme.cs" />
+    <Compile Include="..\ModInfo.cs" Link="ModInfo.cs" />
+    <Compile Include="..\MainForm.cs" Link="MainForm.cs" />
+    <Compile Include="..\AppConfig.cs" Link="AppConfig.cs" />
+  </ItemGroup>
+</Project>
