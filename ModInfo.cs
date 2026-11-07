@@ -9,6 +9,8 @@ public sealed class ModInfoEditor : TableLayoutPanel
     readonly DarkComboBox versionBox = new(ComboBoxStyle.DropDownList);
     readonly Label versionLabel = FieldLabel(L.T("버전"));
     readonly Button downloadButton = Theme.Button(L.T("다운로드 페이지"));
+    /// <summary>Shown for a mod a shared list pinned to one version; lets newer versions be offered again.</summary>
+    readonly Button unpinButton = Theme.Button(L.T("고정 풀기"));
     readonly Panel versionRow;
     readonly DarkComboBox categoryBox = new(ComboBoxStyle.DropDownList);
     readonly DarkComboBox toolBox = new(ComboBoxStyle.DropDownList);
@@ -26,6 +28,12 @@ public sealed class ModInfoEditor : TableLayoutPanel
     readonly Button showNotesButton = Theme.Button(L.T("크게 보기..."));
     /// <summary>Opens the archive's pictures; shown only when the archive has some.</summary>
     readonly Button picturesButton = Theme.Button(L.T("이미지 보기..."));
+    /// <summary>Opens the archive's readmes; shown only when the archive has some.</summary>
+    readonly Button documentsButton = Theme.Button(L.T("설명서 보기..."));
+    // What the archive itself holds, apart from the steps read from the page.
+    readonly Label contentsLabel = FieldLabel(L.T("모드 파일"));
+    readonly FlowLayoutPanel contentsRow = new() { Dock = DockStyle.Fill, Height = Theme.ControlHeight, Margin = new Padding(0, 3, 0, 3), WrapContents = false, Padding = Padding.Empty };
+    int pictureCount, documentCount;
     readonly Panel notesField;
     /// <summary>Below this height the steps are not worth showing inline; the button opens them in a window.</summary>
     const int NotesMinHeight = 70;
@@ -42,7 +50,9 @@ public sealed class ModInfoEditor : TableLayoutPanel
     /// <summary>The user picked another entry in the version list. Gives its index.</summary>
     public event Action<int>? VersionChosen;
     public event Action? DownloadRequested;
+    public event Action? UnpinRequested;
     public event Action? PicturesRequested;
+    public event Action? DocumentsRequested;
     /// <summary>An entered address gave a category, and none was chosen. Gives its name.</summary>
     public event Action<string>? CategoryFound;
 
@@ -67,7 +77,7 @@ public sealed class ModInfoEditor : TableLayoutPanel
         };
         Disposed += (_, _) => addressPause.Dispose();
         ColumnCount = 2;
-        RowCount = addressFirst ? 10 : 9;
+        RowCount = addressFirst ? 11 : 10;
         Padding = new Padding(8);
         Dock = DockStyle.Fill;
         ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
@@ -82,6 +92,11 @@ public sealed class ModInfoEditor : TableLayoutPanel
 
         versionBox.Dock = DockStyle.Fill;
         versionRow = Row(versionBox, downloadButton);
+        unpinButton.Dock = DockStyle.Right;
+        unpinButton.Visible = false;
+        unpinButton.Click += (_, _) => UnpinRequested?.Invoke();
+        versionRow.Controls.Add(new Panel { Dock = DockStyle.Right, Width = 6 });
+        versionRow.Controls.Add(unpinButton);
         versionLabel.Visible = versionRow.Visible = false;
         downloadButton.Click += (_, _) => DownloadRequested?.Invoke();
         void AddVersion()
@@ -164,16 +179,23 @@ public sealed class ModInfoEditor : TableLayoutPanel
         Controls.Add(memoField, 1, row);
         row++;
 
+        // The pictures and readmes inside the shown version's archive.
+        picturesButton.Click += (_, _) => PicturesRequested?.Invoke();
+        documentsButton.Click += (_, _) => DocumentsRequested?.Invoke();
+        picturesButton.Margin = documentsButton.Margin = new Padding(0, 0, 6, 0);
+        contentsRow.Controls.Add(documentsButton);
+        contentsRow.Controls.Add(picturesButton);
+        contentsRow.Controls.Add(new Label { Text = L.T("받은 압축 파일 안에 든 그림과 설명서"), AutoSize = true, ForeColor = Theme.Muted, Margin = new Padding(2, 7, 0, 0) });
+        Controls.Add(contentsLabel, 0, row);
+        Controls.Add(contentsRow, 1, row);
+        row++;
+        contentsLabel.Visible = contentsRow.Visible = false;
+
         // Install steps come from the mod's page; they are read here, not typed.
         var notesHeader = new Panel { Dock = DockStyle.Fill, Height = Theme.ControlHeight, Margin = new Padding(0, 6, 0, 2) };
         refetchButton.Dock = DockStyle.Right;
         showNotesButton.Dock = DockStyle.Right;
         notesHeader.Controls.Add(new Label { Text = L.T("설치 방법 (Nexus 설명에서 가져옴)"), AutoSize = true, ForeColor = Theme.Muted, Dock = DockStyle.Left, Padding = new Padding(0, 6, 0, 0) });
-        picturesButton.Dock = DockStyle.Right;
-        picturesButton.Visible = false;
-        picturesButton.Click += (_, _) => PicturesRequested?.Invoke();
-        notesHeader.Controls.Add(picturesButton);
-        notesHeader.Controls.Add(new Panel { Dock = DockStyle.Right, Width = 6 });
         notesHeader.Controls.Add(showNotesButton);
         notesHeader.Controls.Add(new Panel { Dock = DockStyle.Right, Width = 6 });
         notesHeader.Controls.Add(refetchButton);
@@ -265,12 +287,29 @@ public sealed class ModInfoEditor : TableLayoutPanel
     /// For the heading of a page's files: only what the files share is shown, the category, address and
     /// install steps; the version, tool and memo, each file's own, are hidden.
     /// </summary>
-    public void SetPageMode(bool page)
+    /// <param name="keepMemo">For a mod held by its address: the memo is its own, so it stays.</param>
+    /// <param name="keepDownload">The download button stays, without the version list.</param>
+    public void SetPageMode(bool page, bool keepMemo = false, bool keepDownload = false)
     {
-        foreach (var c in new Control[] { versionLabel, versionRow, toolLabel, toolBox, memoLabel, memoField! })
-            if (c.Visible == page) c.Visible = !page;
+        void Show(Control c, bool visible) { if (c.Visible != visible) c.Visible = visible; }
+        Show(versionLabel, !page);
+        Show(versionBox, !page);
+        Show(versionRow, !page || keepDownload);
+        Show(toolLabel, !page);
+        Show(toolBox, !page);
+        Show(memoLabel, !page || keepMemo);
+        Show(memoField!, !page || keepMemo);
         if (page) myVersionLabel.Visible = myVersionRow.Visible = false;
-        if (page) picturesButton.Visible = false;
+        if (page) pictureCount = documentCount = 0;
+        if (page) ShowContents();
+        if (page) downloadButton.Enabled = true;
+    }
+
+    /// <summary>Shows the pin of a version a shared list asked for, with the button that lifts it; empty hides both.</summary>
+    public void SetPinned(string version)
+    {
+        unpinButton.Visible = version.Length > 0;
+        if (version.Length > 0) unpinButton.Text = L.F("{0} 고정 풀기", version);
     }
 
     /// <summary>Shows the version list, which only the main window uses.</summary>
@@ -327,8 +366,28 @@ public sealed class ModInfoEditor : TableLayoutPanel
     /// <summary>How many pictures the shown version's archive holds; none hides the button.</summary>
     public void SetPictureCount(int count)
     {
-        picturesButton.Visible = count > 0;
+        pictureCount = count;
         picturesButton.Text = L.F("이미지 보기 ({0})...", count);
+        ShowContents();
+    }
+
+    /// <summary>How many readmes the shown version's archive holds; none hides the button.</summary>
+    public void SetDocumentCount(int count)
+    {
+        documentCount = count;
+        documentsButton.Text = count > 1 ? L.F("설명서 보기 ({0})...", count) : L.T("설명서 보기...");
+        ShowContents();
+    }
+
+    /// <summary>The archive's row shows only what it holds, and goes away when it holds neither.</summary>
+    void ShowContents()
+    {
+        // A hidden row reads its buttons as hidden too, so theirs are set without asking first.
+        picturesButton.Visible = pictureCount > 0;
+        documentsButton.Visible = documentCount > 0;
+        void Show(Control c, bool visible) { if (c.Visible != visible) c.Visible = visible; }
+        Show(contentsLabel, pictureCount + documentCount > 0);
+        Show(contentsRow, pictureCount + documentCount > 0);
     }
 
     public void FocusFirstField()
@@ -522,6 +581,166 @@ public sealed class PictureWindow : Form
             return true;
         }
         return base.ProcessCmdKey(ref msg, keyData);
+    }
+}
+
+/// <summary>The readmes and manuals inside a mod's archive, read in place. A PDF opens in its own program.</summary>
+public sealed class DocumentWindow : Form
+{
+    // Larger text files are cut: a readme is never this long, and the box would get slow.
+    const int MaxBytes = 2 * 1024 * 1024;
+    readonly string zipPath;
+    readonly List<string> names;
+    // Both keep their native scrollbar always there, so the app's own bar can stand over it (ScrollHost).
+    readonly ListBox list = new() { IntegralHeight = false, BorderStyle = BorderStyle.None, ScrollAlwaysVisible = true, DrawMode = DrawMode.OwnerDrawFixed };
+    readonly RichTextBox text = new() { ReadOnly = true, BorderStyle = BorderStyle.None, DetectUrls = false, WordWrap = true, ScrollBars = RichTextBoxScrollBars.ForcedVertical };
+    readonly Label caption = new() { Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, ForeColor = Theme.Muted, AutoEllipsis = true };
+    readonly Button openOutside = Theme.Button(L.T("PDF 프로그램으로 열기"));
+    readonly Action<string> open;
+
+    /// <summary>The text on show.</summary>
+    public string ShownText => text.Text;
+    public IReadOnlyList<string> Names => names;
+
+    DocumentWindow(string modName, string zipPath, List<string> names, Action<string> open)
+    {
+        this.zipPath = zipPath;
+        this.names = names;
+        this.open = open;
+        Text = L.F("설명서 - {0}", modName);
+        Theme.Apply(this);
+        list.BackColor = text.BackColor = Theme.Surface;
+        list.ForeColor = text.ForeColor = Theme.Text;
+        ClientSize = new Size(1000, 720);
+        MinimumSize = new Size(480, 360);
+        StartPosition = FormStartPosition.CenterParent;
+        ShowInTaskbar = false;
+        MinimizeBox = false;
+
+        var close = Theme.Button(L.T("닫기"), primary: true);
+        close.DialogResult = DialogResult.OK;
+        CancelButton = close;
+        var bar = new TableLayoutPanel { Dock = DockStyle.Bottom, ColumnCount = 3, Height = Theme.ControlHeight + 16, Padding = new Padding(8) };
+        bar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        bar.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        bar.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        openOutside.Margin = new Padding(0, 0, 6, 0);
+        bar.Controls.Add(caption, 0, 0);
+        bar.Controls.Add(openOutside, 1, 0);
+        bar.Controls.Add(close, 2, 0);
+        var body = new Panel { Dock = DockStyle.Fill, Padding = new Padding(8, 8, 8, 0) };
+        static Panel Framed(Control inside, Padding inset)
+        {
+            var frame = new Panel { BackColor = Theme.Border, Padding = new Padding(1) };
+            frame.Controls.Add(new ScrollHost(inside, inset) { Dock = DockStyle.Fill });
+            return frame;
+        }
+        var textFrame = Framed(text, new Padding(8, 6, 0, 6));
+        textFrame.Dock = DockStyle.Fill;
+        body.Controls.Add(textFrame);
+        if (names.Count > 1)
+        {
+            body.Controls.Add(new Panel { Dock = DockStyle.Left, Width = 8 });
+            var listFrame = Framed(list, new Padding(0, 2, 0, 2));
+            listFrame.Dock = DockStyle.Left;
+            listFrame.Width = 260;
+            body.Controls.Add(listFrame);
+            list.ItemHeight = Theme.BaseFont.Height + 8;
+            list.DrawItem += (_, e) =>
+            {
+                if (e.Index < 0) return;
+                var chosen = (e.State & DrawItemState.Selected) != 0;
+                using (var back = new SolidBrush(chosen ? Theme.Selection : Theme.Surface))
+                    e.Graphics.FillRectangle(back, e.Bounds);
+                TextRenderer.DrawText(e.Graphics, names[e.Index], list.Font, new Rectangle(e.Bounds.X + 8, e.Bounds.Y, e.Bounds.Width - 10, e.Bounds.Height),
+                    Theme.Text, TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
+            };
+            foreach (var name in names) list.Items.Add(name);
+            list.SelectedIndexChanged += (_, _) => { if (list.SelectedIndex >= 0) ShowAt(list.SelectedIndex); };
+        }
+        Controls.Add(body);
+        Controls.Add(bar);
+        openOutside.Click += (_, _) => OpenOutside();
+        Shown += (_, _) => close.Focus();
+        ShowAt(0);
+    }
+
+    public static void Show(IWin32Window? owner, string modName, string zipPath, Action<string> open)
+    {
+        var names = Manager.DocumentsIn(zipPath);
+        if (names.Count == 0) return;
+        using var form = new DocumentWindow(modName, zipPath, names, open);
+        form.ShowDialog(owner);
+    }
+
+    bool IsPdf(int at) => Path.GetExtension(names[at]).Equals(".pdf", StringComparison.OrdinalIgnoreCase);
+
+    int Current => list.Items.Count > 0 ? Math.Max(list.SelectedIndex, 0) : 0;
+
+    public void ShowAt(int at)
+    {
+        // With a list, choosing the row shows it.
+        if (list.Items.Count > 0 && list.SelectedIndex != at) { list.SelectedIndex = at; return; }
+        var name = names[at];
+        caption.Text = names.Count > 1 ? $"{name}  ({at + 1}/{names.Count})" : name;
+        openOutside.Visible = IsPdf(at);
+        text.Clear();
+        text.ForeColor = Theme.Text;
+        if (IsPdf(at))
+        {
+            text.Text = L.T("PDF는 여기서 보여 줄 수 없습니다. [PDF 프로그램으로 열기]를 눌러 주세요.");
+            return;
+        }
+        try
+        {
+            using var zip = System.IO.Compression.ZipFile.OpenRead(zipPath);
+            var entry = zip.GetEntry(name)!;
+            using var stream = entry.Open();
+            var bytes = new byte[Math.Min(entry.Length, MaxBytes)];
+            stream.ReadExactly(bytes);
+            var words = Manager.ReadDocumentText(bytes);
+            var type = Path.GetExtension(name).ToLowerInvariant();
+            if (type == ".rtf")
+            {
+                try
+                {
+                    text.Rtf = words;
+                    // The author's colours are often black on white; the dark window keeps its own.
+                    text.SelectAll();
+                    text.SelectionColor = Theme.Text;
+                    text.SelectionBackColor = Theme.Surface;
+                    text.Select(0, 0);
+                    return;
+                }
+                catch (ArgumentException) { }
+            }
+            if (type is ".html" or ".htm") words = Manager.PlainFromHtml(words);
+            text.Text = words.Replace("\r\n", "\n").Replace("\n", "\r\n");
+        }
+        catch (Exception ex) when (ex is InvalidDataException or IOException or UnauthorizedAccessException)
+        {
+            text.Text = L.F("열 수 없는 설명서입니다: {0}", Path.GetFileName(name));
+        }
+    }
+
+    /// <summary>Copies the PDF out to the temporary folder and opens it from there.</summary>
+    void OpenOutside()
+    {
+        var at = Current;
+        if (!IsPdf(at)) return;
+        try
+        {
+            var folder = Path.Combine(Path.GetTempPath(), "PBZModManager", "docs");
+            Directory.CreateDirectory(folder);
+            var file = Path.Combine(folder, Path.GetFileName(names[at]));
+            using (var zip = System.IO.Compression.ZipFile.OpenRead(zipPath))
+                System.IO.Compression.ZipFileExtensions.ExtractToFile(zip.GetEntry(names[at])!, file, overwrite: true);
+            open(file);
+        }
+        catch (Exception ex) when (ex is InvalidDataException or IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
+        {
+            DarkDialog.Show(this, ex.Message, L.T("설명서"), isError: true);
+        }
     }
 }
 

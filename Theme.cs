@@ -235,8 +235,9 @@ public sealed class ButtonBar : Panel
         {
             var item = new ToolStripMenuItem(b.Text) { Enabled = b.Enabled, ForeColor = Theme.Text };
             var target = b;
-            // A hidden button cannot be clicked, so it is shown for the moment of the click.
-            item.Click += (_, _) => { target.Visible = true; ((Button)target).PerformClick(); PerformLayout(); };
+            // A hidden button ignores a click, and showing it for the moment lays the row out again and hides it
+            // at once; so the menu runs the button's own action directly.
+            item.Click += (_, _) => { if (target is DarkButton button && button.Enabled) button.Press(); };
             menu.Items.Add(item);
         }
         menu.Show(more, new Point(0, more.Height));
@@ -426,6 +427,9 @@ public sealed class DarkMenuRenderer : ToolStripProfessionalRenderer
 
 public sealed class DarkButton : Button
 {
+    /// <summary>Runs the button's action as a click would, also while it sits hidden in a "더 보기" menu.</summary>
+    public void Press() => OnClick(EventArgs.Empty);
+
     readonly bool primary;
     bool hover;
     bool pressed;
@@ -676,6 +680,7 @@ public sealed class DarkScrollBar : Control
     const int WmMouseWheel = 0x020A;
     const int SbThumbPosition = 4;
     const int LvmScroll = 0x1014;
+    const int EmSetScrollPos = 0x04DE;
 
     readonly Control target;
     readonly System.Windows.Forms.Timer sync = new() { Interval = 60 };
@@ -735,6 +740,12 @@ public sealed class DarkScrollBar : Control
         {
             // Report-view positions count rows, but the scroll message takes pixels.
             SendMessage(list.Handle, LvmScroll, IntPtr.Zero, (position - info.Pos) * list.GetItemRect(0).Height);
+        }
+        else if (target is RichTextBox)
+        {
+            // A long text's position goes past what the scroll message's 16 bits can carry.
+            var point = new Point(0, position);
+            SendMessage(target.Handle, EmSetScrollPos, IntPtr.Zero, ref point);
         }
         else
         {
@@ -837,6 +848,9 @@ public sealed class DarkScrollBar : Control
 
     [DllImport("user32.dll")]
     static extern IntPtr SendMessage(IntPtr hwnd, int message, IntPtr wParam, int lParam);
+
+    [DllImport("user32.dll")]
+    static extern IntPtr SendMessage(IntPtr hwnd, int message, IntPtr wParam, ref Point lParam);
 }
 
 public sealed record ListRow(string[] Cells, object Tag, Color? Color = null);

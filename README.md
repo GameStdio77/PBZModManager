@@ -18,7 +18,7 @@ Phantom Blade Zero(팬텀 블레이드 제로)용 모드 매니저입니다. 받
 - **안전한 설치와 제거**: 설치할 때 덮어쓰는 파일을 모두 백업하고, 제거하면 원래 상태로 되돌립니다. 설치 후 바뀐 파일이나 모드가 만든 파일은 지우지 않고 보관 폴더로 옮깁니다.
 - **미리보기와 파일 고르기**: 설치 전에 어떤 파일이 어디로 가는지 경로별·작업별로 보여 주고, 원하지 않는 파일은 체크를 풀어 뺄 수 있습니다. 뺀 파일은 다음 업데이트에도 그대로 빠집니다.
 - **알아서 맞는 자리에 설치**
-  - JS 모드: PBZModLoader(`ProjectPBZ/PBZModLoader/mods`)와 Mods Menu(`.../JavaScript/PBZModsMenu/Mods`) 중 쓰는 쪽에 맞춰 배치
+  - JS 모드: PBZModLoader(`ProjectPBZ/PBZModLoader/mods`)와 Mods Menu(`.../JavaScript/PBZModsMenu/Mods`) 중 설치된 쪽에 맞춰 자동 배치 (둘 다 있으면 Mods Menu 기준, 둘은 함께 둬도 됨)
   - UE4SS 본체는 `platform/steam`, UE4SS Lua 모드는 `platform/steam/ue4ss/Mods`
   - pak 모드는 `Content/Paks/~mods`, 블루프린트 모드는 `Content/Paks/LogicMods`
   - "(choose one)"처럼 같은 파일을 쓰는 옵션 폴더는 묶음마다 하나씩 골라 설치
@@ -27,7 +27,9 @@ Phantom Blade Zero(팬텀 블레이드 제로)용 모드 매니저입니다. 받
 - **버전 관리**: 같은 모드의 여러 버전을 한 모드로 묶어 업데이트·다운그레이드하고, 이전 버전 파일을 정리(휴지통으로)할 수 있습니다.
 - **정리 도구**: 설치된 모드 순서 바꾸기와 이름 붙인 구분선, 한 줄 메모, 여러 모드 한 번에 설치·제거
 - **미리보기 이미지**: 압축 안에 그림이 있으면 모드 정보의 [이미지 보기]로 좌우로 넘겨 볼 수 있습니다.
+- **설명서 보기**: 압축 안의 readme·설명서(txt, md, rtf, html)를 모드 정보의 [설명서 보기]로 바로 읽습니다. PDF는 PDF 프로그램으로 엽니다. 설명서는 게임 폴더에 깔리지 않도록 설치에서 뺍니다(모드 폴더 안의 파일과 게임 폴더 구조로 들어 있는 파일은 그대로 설치).
 - **구조가 바뀐 버전 안내**: 새 버전의 옵션 구성이나 설치 위치가 크게 달라졌으면, 이전 버전을 제거한 뒤 설치하도록 안내합니다.
+- **자리 잡기와 목록 공유**: 파일 없이 주소만으로 받을 모드의 자리를 잡아 두고, 내 모드 목록을 파일이나 글로 공유할 수 있습니다. 공유받은 목록은 없는 모드의 자리만 만들고, 받아서 끌어다 놓으면 채워집니다. 버전을 고정해 보내면 받는 쪽에 그 버전을 받도록 안내합니다.
 - **게임 실행 버튼**, **4개 언어**(한국어·English·简体中文·日本語), 매니저 새 버전 알림
 
 ### 사용법
@@ -43,6 +45,7 @@ Phantom Blade Zero(팬텀 블레이드 제로)용 모드 매니저입니다. 받
 6. 모드를 골라 [설치...]를 누르면 미리보기가 나옵니다. 빼고 싶은 파일의 체크를 풀고 설치합니다.
 7. [최신 버전 확인]을 누르면 주소를 넣은 모드마다 새 버전이 있는지 확인합니다. 새 버전이 있으면 다운로드 페이지를 열 수 있고, 받은 파일을 다시 끌어다 놓으면 업데이트할 수 있습니다.
 8. 오른쪽 위 [게임 실행]으로 게임을 바로 실행할 수 있습니다.
+9. 아직 받지 않은 모드는 [주소로 추가...]에 주소나 모드 번호를 넣어 자리를 잡아 둘 수 있습니다. [목록 공유...]로 내 목록을 파일이나 클립보드 글로 보내고, 받는 사람은 [목록 가져오기...]로 불러옵니다. 가져오기는 자리만 만들 뿐 아무것도 내려받거나 설치하지 않습니다.
 
 게임이 실행 중일 때는 설치·제거를 막습니다. 언어는 오른쪽 위에서 바꾸며, 다시 시작하면 적용됩니다.
 
@@ -54,7 +57,8 @@ Phantom Blade Zero(팬텀 블레이드 제로)용 모드 매니저입니다. 받
 | `history/` | 설치 기록과 덮어쓴 원본 백업. 제거·되돌리기에 필요하니 지우지 마세요. |
 | `leftovers/` | 제거할 때 지우지 않고 옮겨 둔 파일. [보관 폴더 비우기]로 휴지통에 보낼 수 있습니다. |
 | `meta.json` | 모드별 카테고리·주소·메모·실행 도구·설치 방법 |
-| `settings.json` | 게임 폴더, JS 모드 실행기, 언어, 창 위치 |
+| `wanted.json`, `shared-order.json` | 주소로 잡아 둔 자리, 공유받은 목록의 설치 순서 |
+| `settings.json` | 게임 폴더, 언어, 창 위치 |
 | `order.json`, `categories.json`, `remote.json`, `log.txt` | 목록 순서·구분선, 카테고리, 최신 버전 확인 결과, 작업 기록 |
 
 ### 네트워크 사용
@@ -83,7 +87,7 @@ A mod manager for Phantom Blade Zero. It installs downloaded mod archives where 
 - **Safe install and removal**: every file an install overwrites is backed up, and removing a mod restores it. Files changed or created after install are moved to a kept-files folder rather than deleted.
 - **Preview and file picking**: before installing, see where every file goes, grouped by folder or by step, and untick files you don't want. Left-out files stay left out on later updates.
 - **Right place automatically**
-  - JS mods: placed for PBZModLoader (`ProjectPBZ/PBZModLoader/mods`) or Mods Menu (`.../JavaScript/PBZModsMenu/Mods`), whichever you use
+  - JS mods: placed for PBZModLoader (`ProjectPBZ/PBZModLoader/mods`) or Mods Menu (`.../JavaScript/PBZModsMenu/Mods`), whichever is installed, automatically (Mods Menu when both are; both may stay installed)
   - UE4SS itself in `platform/steam`, UE4SS Lua mods in `platform/steam/ue4ss/Mods`
   - pak mods in `Content/Paks/~mods`, Blueprint mods in `Content/Paks/LogicMods`
   - "(choose one)" option folders that share files: one per group
@@ -92,7 +96,9 @@ A mod manager for Phantom Blade Zero. It installs downloaded mod archives where 
 - **Versions**: several versions of a mod are one mod to update or downgrade; old version files can be cleaned up (to the Recycle Bin).
 - **Organizing**: reorder installed mods, named separators, one-line memos, install or remove several mods at once
 - **Preview pictures**: when an archive holds pictures, [Pictures] in the mod info pages through them.
+- **Readmes**: [Readme] in the mod info shows the archive's readmes and manuals (txt, md, rtf, html) right there; a PDF opens in your PDF viewer. Readmes are left out of the install so they don't litter the game folder (files inside a mod's own folder, or laid out like the game folder, still install).
 - **Changed layouts**: when a new version's options or install locations changed a lot, you are guided to remove the old version first.
+- **Places and shared lists**: hold a place for a mod by its address before you have the file, and share your mod list as a file or as text. An imported list only makes places for the mods you lack; drop the downloaded files to fill them. A pinned version tells the receiver to get exactly that version.
 - **Play button**, **four languages** (한국어 · English · 简体中文 · 日本語), notice when a new manager version is out
 
 ### Usage
@@ -108,6 +114,7 @@ A mod manager for Phantom Blade Zero. It installs downloaded mod archives where 
 6. Pick a mod and press [Install...] to see the preview. Untick files you want left out, then install.
 7. [Check for updates] checks every mod that has an address. When a newer version is out, open its download page and drop the downloaded file on the window to update.
 8. [Play] at the top right starts the game.
+9. For a mod you have not downloaded yet, [Add by address...] holds its place from an address or mod number. [Share list...] sends your list as a file or as clipboard text, and the receiver loads it with [Import list...]. Importing only makes places; it downloads and installs nothing.
 
 Installing and removing are blocked while the game runs. The language is picked at the top right and applies after a restart.
 
@@ -119,7 +126,8 @@ Installing and removing are blocked while the game runs. The language is picked 
 | `history/` | Install records and backups of overwritten files. Needed to remove and undo; do not delete. |
 | `leftovers/` | Files moved aside instead of deleted on removal. [Empty kept files] sends them to the Recycle Bin. |
 | `meta.json` | Each mod's category, address, memo, tool, install steps |
-| `settings.json` | Game folder, JS mod runner, language, window place |
+| `wanted.json`, `shared-order.json` | Places held by address, and the order of an imported list |
+| `settings.json` | Game folder, language, window place |
 | `order.json`, `categories.json`, `remote.json`, `log.txt` | List order and separators, categories, update check results, work log |
 
 ### Network use
@@ -148,7 +156,7 @@ Phantom Blade Zero（影之刃零）的模组管理器。它会把下载的模�
 - **安全的安装与移除**：安装时备份所有被覆盖的文件，移除时恢复原状。安装后被修改或新生成的文件不会删除，而是移到保留文件夹。
 - **预览与选择文件**：安装前按路径或按操作显示每个文件的去向，取消勾选即可排除不想要的文件。排除的文件在以后的更新中也保持排除。
 - **自动放到正确位置**
-  - JS 模组：按你使用的 PBZModLoader（`ProjectPBZ/PBZModLoader/mods`）或 Mods Menu（`.../JavaScript/PBZModsMenu/Mods`）放置
+  - JS 模组：自动按已安装的 PBZModLoader（`ProjectPBZ/PBZModLoader/mods`）或 Mods Menu（`.../JavaScript/PBZModsMenu/Mods`）放置（两者都有时以 Mods Menu 为准，两者可以共存）
   - UE4SS 本体放在 `platform/steam`，UE4SS Lua 模组放在 `platform/steam/ue4ss/Mods`
   - pak 模组放在 `Content/Paks/~mods`，蓝图模组放在 `Content/Paks/LogicMods`
   - 像“(choose one)”这样共用文件的选项文件夹，每组选一个安装
@@ -157,7 +165,9 @@ Phantom Blade Zero（影之刃零）的模组管理器。它会把下载的模�
 - **版本管理**：同一模组的多个版本作为一个模组来更新或降级，旧版本文件可以清理（移到回收站）。
 - **整理工具**：调整已安装模组的顺序、带名称的分隔线、一行备注、一次安装或移除多个模组
 - **预览图片**：压缩包中有图片时，可在模组信息中点击 [查看图片] 左右翻看。
+- **查看说明**：在模组信息中点击 [查看说明] 可直接阅读压缩包内的 readme 和说明文件（txt、md、rtf、html），PDF 用 PDF 程序打开。说明文件不会安装到游戏文件夹（模组自身文件夹内或按游戏文件夹结构放置的文件仍会安装）。
 - **结构变更提示**：新版本的选项构成或安装位置变化较大时，会提示先移除旧版本再安装。
+- **预留位置与分享列表**：没有文件时也能只用地址为要下载的模组预留位置，并可将模组列表以文件或文字分享。导入的列表只为缺少的模组预留位置，下载后拖入即可填入。固定版本分享时会提示对方下载该版本。
 - **启动游戏按钮**、**四种语言**（한국어 · English · 简体中文 · 日本語）、管理器新版本提醒
 
 ### 使用方法
@@ -173,6 +183,7 @@ Phantom Blade Zero（影之刃零）的模组管理器。它会把下载的模�
 6. 选择模组后点击 [安装...] 会显示预览。取消勾选不想安装的文件，然后安装。
 7. 点击 [检查最新版本] 会检查每个填写了地址的模组。有新版本时可以打开下载页面，把下载的文件拖到窗口即可更新。
 8. 点击右上角的 [启动游戏] 可直接启动游戏。
+9. 尚未下载的模组可以用 [按地址添加...] 填写地址或模组编号预留位置。用 [分享列表...] 将列表保存为文件或复制为文字，对方用 [导入列表...] 导入。导入只会预留位置，不会下载或安装任何内容。
 
 游戏运行时无法安装或移除。语言在右上角选择，重新启动后生效。
 
@@ -184,7 +195,8 @@ Phantom Blade Zero（影之刃零）的模组管理器。它会把下载的模�
 | `history/` | 安装记录和被覆盖原文件的备份。移除和撤销时需要，请勿删除。 |
 | `leftovers/` | 移除时没有删除而移到这里的文件。可用 [清空保留文件夹] 移到回收站。 |
 | `meta.json` | 每个模组的分类、地址、备注、运行工具、安装方法 |
-| `settings.json` | 游戏文件夹、JS 模组运行器、语言、窗口位置 |
+| `wanted.json`、`shared-order.json` | 按地址预留的位置，导入列表的安装顺序 |
+| `settings.json` | 游戏文件夹、语言、窗口位置 |
 | `order.json`、`categories.json`、`remote.json`、`log.txt` | 列表顺序与分隔线、分类、最新版本检查结果、操作日志 |
 
 ### 网络使用
@@ -213,7 +225,7 @@ Phantom Blade Zero 用の Mod マネージャーです。ダウンロードし�
 - **安全なインストールと削除**：インストール時に上書きするファイルをすべてバックアップし、削除すると元に戻します。インストール後に変更されたファイルや Mod が作ったファイルは消さずに保管フォルダーへ移します。
 - **プレビューとファイル選択**：インストール前に各ファイルの行き先をパス別・作業別に表示し、不要なファイルはチェックを外して除外できます。除外したファイルは次のアップデートでも除外されます。
 - **正しい場所に自動でインストール**
-  - JS Mod：使っている PBZModLoader（`ProjectPBZ/PBZModLoader/mods`）または Mods Menu（`.../JavaScript/PBZModsMenu/Mods`）に合わせて配置
+  - JS Mod：インストールされている PBZModLoader（`ProjectPBZ/PBZModLoader/mods`）または Mods Menu（`.../JavaScript/PBZModsMenu/Mods`）に合わせて自動で配置（両方あれば Mods Menu 基準、両方入れておけます）
   - UE4SS 本体は `platform/steam`、UE4SS の Lua Mod は `platform/steam/ue4ss/Mods`
   - pak Mod は `Content/Paks/~mods`、ブループリント Mod は `Content/Paks/LogicMods`
   - 「(choose one)」のように同じファイルを使うオプションフォルダーは、グループごとに 1 つ選んでインストール
@@ -222,7 +234,9 @@ Phantom Blade Zero 用の Mod マネージャーです。ダウンロードし�
 - **バージョン管理**：同じ Mod の複数バージョンを 1 つの Mod として更新・ダウングレードし、旧バージョンのファイルを整理（ごみ箱へ）できます。
 - **整理ツール**：インストール済み Mod の並べ替え、名前付きの区切り線、1 行メモ、複数の Mod の一括インストール・削除
 - **プレビュー画像**：圧縮ファイルに画像があれば、Mod 情報の [画像を見る] で左右にめくって見られます。
+- **説明書を見る**：圧縮ファイル内の readme・説明書（txt、md、rtf、html）を Mod 情報の [説明書を見る] でその場で読めます。PDF は PDF アプリで開きます。説明書はゲームフォルダーに置かれないようインストールから除外します（Mod 自身のフォルダー内や、ゲームフォルダーの構成どおりに入っているファイルはそのままインストール）。
 - **構成が変わったバージョンの案内**：新しいバージョンのオプション構成やインストール先が大きく変わった場合、以前のバージョンを削除してからインストールするよう案内します。
+- **場所の確保と一覧の共有**：ファイルがなくてもアドレスだけで入手予定の Mod の場所を確保でき、Mod 一覧をファイルや文章で共有できます。取り込んだ一覧は足りない Mod の場所だけを作り、入手してドラッグすると埋まります。バージョンを固定して共有すると、受け取る側にそのバージョンを入手するよう案内します。
 - **ゲーム起動ボタン**、**4 言語**（한국어 · English · 简体中文 · 日本語）、マネージャーの新バージョン通知
 
 ### 使い方
@@ -238,6 +252,7 @@ Phantom Blade Zero 用の Mod マネージャーです。ダウンロードし�
 6. Mod を選んで [インストール...] を押すとプレビューが出ます。除外したいファイルのチェックを外してインストールします。
 7. [最新バージョン確認] を押すと、アドレスを入れた Mod ごとに新しいバージョンがあるか確認します。新しいバージョンがあればダウンロードページを開き、ダウンロードしたファイルをウィンドウにドラッグすると更新できます。
 8. 右上の [ゲーム起動] でゲームをすぐに起動できます。
+9. まだ入手していない Mod は [アドレスで追加...] にアドレスか Mod 番号を入れて場所を確保できます。[一覧を共有...] で一覧をファイルかクリップボードの文章として送り、受け取る人は [一覧を取り込む...] で読み込みます。取り込みは場所を作るだけで、ダウンロードやインストールはしません。
 
 ゲームの実行中はインストール・削除できません。言語は右上で選び、再起動後に反映されます。
 
@@ -249,7 +264,8 @@ Phantom Blade Zero 用の Mod マネージャーです。ダウンロードし�
 | `history/` | インストール記録と上書きした元ファイルのバックアップ。削除・元に戻すときに必要なので消さないでください。 |
 | `leftovers/` | 削除時に消さずに移したファイル。[保管フォルダーを空にする] でごみ箱に送れます。 |
 | `meta.json` | Mod ごとのカテゴリー・アドレス・メモ・実行ツール・インストール方法 |
-| `settings.json` | ゲームフォルダー、JS Mod 実行環境、言語、ウィンドウ位置 |
+| `wanted.json`、`shared-order.json` | アドレスで確保した場所、取り込んだ一覧のインストール順 |
+| `settings.json` | ゲームフォルダー、言語、ウィンドウ位置 |
 | `order.json`、`categories.json`、`remote.json`、`log.txt` | 一覧の順番と区切り線、カテゴリー、最新バージョン確認の結果、作業記録 |
 
 ### ネットワークの使用

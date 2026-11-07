@@ -9,6 +9,7 @@
   <ItemGroup>
     <Compile Include="..\Core.cs" Link="Core.cs" />
     <Compile Include="..\Lang.cs" Link="Lang.cs" />
+    <Compile Include="..\Sharing.cs" Link="Sharing.cs" />
     <Compile Include="..\LangTable.cs" Link="LangTable.cs" />
   </ItemGroup>
   <ItemGroup>

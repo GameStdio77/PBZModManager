@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.IO.Compression;
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 
 namespace PBZModManager;
@@ -53,7 +54,7 @@ public enum Placement
 {
     AsPackaged, Ue4ssPackage, Pak, Ue4ssMod, BesideExe, MovedToLoader,
     // Left out:
-    OtherCopyLeftOut, UnchosenLeftOut, PictureLeftOut, FolderLeftOut, UserLeftOut,
+    OtherCopyLeftOut, UnchosenLeftOut, PictureLeftOut, FolderLeftOut, UserLeftOut, DocumentLeftOut,
 }
 
 /// <summary>The main window's place and size in normal state, whether it was maximized, and its splitters.</summary>
@@ -98,6 +99,19 @@ public static class LooseLayout
         new[] { "ProjectPBZ/", "platform/", "Engine/" }.Any(top => (path + "/").StartsWith(top, StringComparison.OrdinalIgnoreCase));
 
     static bool IsPak(string path) => PakTypes.Contains(Path.GetExtension(path), StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>File types a mod's readme or manual comes in.</summary>
+    public static readonly string[] DocumentTypes = { ".txt", ".md", ".rtf", ".html", ".htm", ".pdf" };
+    // Names authors give their readmes and manuals, in the four languages the manager speaks.
+    static readonly System.Text.RegularExpressions.Regex DocumentName = new(
+        @"read[\s_-]*me|install|instruction|manual|guide|how[\s_-]*to|change[\s_-]*log|changes|license|licence|credits|설명|설치|사용법|안내|说明|說明|安装|使用|説明|使い方|導入|インストール",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+    public static bool IsDocumentType(string path) => DocumentTypes.Contains(Path.GetExtension(path), StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>A readme or manual by its type and name, such as "README.txt" or "설치 방법.pdf".</summary>
+    public static bool IsDocument(string path) =>
+        !path.EndsWith('/') && IsDocumentType(path) && DocumentName.IsMatch(Path.GetFileNameWithoutExtension(path));
 
     /// <summary>
     /// Takes off one folder that wraps a whole archive of loose mod files, such as "SoulVerR AIO v1.02/":
@@ -198,6 +212,10 @@ public static class LooseLayout
             if (laidOut && isDir) return (null, Placement.FolderLeftOut);
             if (laidOut && !path.Contains('/') && Pictures.Contains(Path.GetExtension(path), StringComparer.OrdinalIgnoreCase))
                 return (null, Placement.PictureLeftOut);
+            // Readmes would only land loose in the game folder; the manager shows them instead.
+            // Other text files (mods.txt, presets) may be read by a mod, so only named readmes, or text beside paks, are left out.
+            if (!isDir && (IsDocument(path) || (laidOut && !path.Contains('/') && IsDocumentType(path))))
+                return (null, Placement.DocumentLeftOut);
             return (path, Placement.AsPackaged);
         };
     }
@@ -644,9 +662,16 @@ public static class NexusApi
     /// <summary>A page's category and the install steps from its description; either may be empty.</summary>
     public static (string Category, string InstallNotes) GetPageInfo(NexusLink link)
     {
+        var page = GetPage(link);
+        return (page.Category, page.InstallNotes);
+    }
+
+    /// <summary>A page's name, category and install steps; any may be empty.</summary>
+    public static (string Name, string Category, string InstallNotes) GetPage(NexusLink link)
+    {
         var body = JsonSerializer.Serialize(new
         {
-            query = "query($ids:[CompositeDomainWithIdInput!]!){ legacyModsByDomain(ids:$ids){ nodes { modCategory { name } description } } }",
+            query = "query($ids:[CompositeDomainWithIdInput!]!){ legacyModsByDomain(ids:$ids){ nodes { name modCategory { name } description } } }",
             variables = new { ids = new[] { new { gameDomain = link.Game, modId = int.Parse(link.ModId) } } },
         });
         var json = Post(body);
@@ -654,7 +679,35 @@ public static class NexusApi
         var nodes = doc.RootElement.GetProperty("data").GetProperty("legacyModsByDomain").GetProperty("nodes");
         var description = nodes.GetArrayLength() > 0 && nodes[0].TryGetProperty("description", out var d) && d.ValueKind == JsonValueKind.String
             ? d.GetString() ?? "" : "";
-        return (ParseCategory(json), InstallNotes.Extract(description));
+        var name = nodes.GetArrayLength() > 0 && nodes[0].TryGetProperty("name", out var n) && n.ValueKind == JsonValueKind.String
+            ? System.Net.WebUtility.HtmlDecode(n.GetString() ?? "").Trim() : "";
+        return (name, ParseCategory(json), InstallNotes.Extract(description));
+    }
+
+    /// <summary>
+    /// The file of one version of a mod on its page, old versions included, for a list that asked for exactly
+    /// that version. Empty when the page has no such file.
+    /// </summary>
+    public static string FileIdFor(NexusLink link, string localName, string version)
+    {
+        var gameBody = JsonSerializer.Serialize(new { query = "query($d:String!){ game(domainName:$d){ id } }", variables = new { d = link.Game } });
+        using var gameDoc = JsonDocument.Parse(Post(gameBody));
+        if (gameDoc.RootElement.GetProperty("data").GetProperty("game") is not { ValueKind: JsonValueKind.Object } game) return "";
+        var body = JsonSerializer.Serialize(new { query = $"{{ modFiles(modId:\"{link.ModId}\", gameId:\"{game.GetProperty("id")}\"){{ fileId name version category }} }}" });
+        using var doc = JsonDocument.Parse(Post(body));
+        if (!doc.RootElement.GetProperty("data").TryGetProperty("modFiles", out var list) || list.ValueKind != JsonValueKind.Array) return "";
+        string Text(JsonElement e, string name) => e.TryGetProperty(name, out var v) && v.ValueKind != JsonValueKind.Null ? v.ToString() : "";
+        var files = list.EnumerateArray().Select(f => new NexusFile(Text(f, "name"), Text(f, "version"), Text(f, "category"), Text(f, "fileId")));
+        return ChooseFileForVersion(localName, files, version);
+    }
+
+    /// <summary>The file of this mod at exactly this version; when the names do not tell, any file of that version.</summary>
+    public static string ChooseFileForVersion(string localName, IEnumerable<NexusFile> files, string version)
+    {
+        var all = files.ToList();
+        var mine = MineOf(localName, all);
+        return (mine.FirstOrDefault(f => ModIdentity.CompareVersions(f.Version, version) == 0)
+            ?? (mine.Count == 0 ? all.FirstOrDefault(f => ModIdentity.CompareVersions(f.Version, version) == 0) : null))?.FileId ?? "";
     }
 
     public static string ParseCategory(string json)
@@ -968,6 +1021,8 @@ public sealed class ModMeta
     public string Tool { get; set; } = "";
     /// <summary>The version the user gave a file whose name carries none, compared with the page's.</summary>
     public string Version { get; set; } = "";
+    /// <summary>A shared list asked for exactly this version: newer ones on the page are not offered as updates.</summary>
+    public string PinnedVersion { get; set; } = "";
     /// <summary>The user added this archive to the list. Other files in the folder are not shown.</summary>
     public bool Registered { get; set; }
 
@@ -995,7 +1050,7 @@ public sealed class ModMeta
     }
 }
 
-public sealed class Manager
+public sealed partial class Manager
 {
     // Settings the user may have changed: an update keeps them.
     static readonly string[] KeepIfExists =
@@ -1181,9 +1236,13 @@ public sealed class Manager
     /// The loader mods are placed for. Left on automatic, it is the one installed; with both or neither,
     /// archives install as they are packaged.
     /// </summary>
+    /// <remarks>
+    /// With both installed, Mods Menu normally starts first and runs PBZModLoader's mods folder as well, so
+    /// automatic follows Mods Menu: a mod packaged for both then goes in once, not twice.
+    /// </remarks>
     public ScriptRuntime TargetRuntime => Runtime != ScriptRuntime.Auto ? Runtime
-        : LoaderInstalled && !MenuInstalled ? ScriptRuntime.Loader
-        : MenuInstalled && !LoaderInstalled ? ScriptRuntime.Menu
+        : MenuInstalled ? ScriptRuntime.Menu
+        : LoaderInstalled ? ScriptRuntime.Loader
         : ScriptRuntime.Auto;
 
     /// <summary>
@@ -1490,6 +1549,55 @@ public sealed class Manager
         {
             return new List<string>();
         }
+    }
+
+    /// <summary>
+    /// The readmes and manuals in an archive: named ones anywhere, and any text outside the game's folders.
+    /// Named ones come first.
+    /// </summary>
+    public static List<string> DocumentsIn(string zipPath)
+    {
+        try
+        {
+            using var zip = ZipFile.OpenRead(zipPath);
+            return zip.Entries.Where(e => e.Length > 0 && LooseLayout.IsDocumentType(e.FullName)
+                    && (LooseLayout.IsDocument(e.FullName) || (!LooseLayout.InGameLayout(e.FullName) && !e.FullName.Contains("/Scripts/", StringComparison.OrdinalIgnoreCase))))
+                .Select(e => e.FullName)
+                .OrderBy(n => LooseLayout.IsDocument(n) ? 0 : 1).ThenBy(n => n, Comparer<string>.Create(StrCmpLogicalW)).ToList();
+        }
+        catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException)
+        {
+            return new List<string>();
+        }
+    }
+
+    /// <summary>
+    /// A text document's words. Files without a byte order mark are tried as UTF-8 first, then in the
+    /// code pages of the manager's languages, the current one first.
+    /// </summary>
+    public static string ReadDocumentText(byte[] bytes)
+    {
+        if (bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF) return Encoding.UTF8.GetString(bytes, 3, bytes.Length - 3);
+        if (bytes.Length >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE) return Encoding.Unicode.GetString(bytes, 2, bytes.Length - 2);
+        if (bytes.Length >= 2 && bytes[0] == 0xFE && bytes[1] == 0xFF) return Encoding.BigEndianUnicode.GetString(bytes, 2, bytes.Length - 2);
+        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+        var pages = L.Current switch { "zh" => new[] { 936, 949, 932 }, "ja" => new[] { 932, 949, 936 }, _ => new[] { 949, 936, 932 } };
+        foreach (var page in pages.Prepend(65001))
+        {
+            try { return Encoding.GetEncoding(page, EncoderFallback.ExceptionFallback, DecoderFallback.ExceptionFallback).GetString(bytes); }
+            catch (DecoderFallbackException) { }
+        }
+        return Encoding.Latin1.GetString(bytes);
+    }
+
+    /// <summary>The words of a web page, with its tags and scripts taken out.</summary>
+    public static string PlainFromHtml(string html)
+    {
+        const System.Text.RegularExpressions.RegexOptions Options = System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Singleline;
+        var s = System.Text.RegularExpressions.Regex.Replace(html, @"<(script|style)\b[^>]*>.*?</\1\s*>", "", Options);
+        s = System.Text.RegularExpressions.Regex.Replace(s, @"<\s*(br|/p|/div|/li|/h\d|/tr)\b[^>]*>", "\n", Options);
+        s = System.Text.RegularExpressions.Regex.Replace(s, "<[^>]+>", "", Options);
+        return System.Net.WebUtility.HtmlDecode(s).Trim();
     }
 
     /// <summary>Compares names the way Explorer sorts them: "(2)" before "(11)".</summary>
@@ -1861,12 +1969,10 @@ public sealed class Manager
             plan.Warnings.Add(TargetRuntime == ScriptRuntime.Menu
                 ? L.F("모드 로더용 복사본 {0}개는 설치하지 않습니다. 같은 모드가 Mods Menu용으로도 들어 있습니다.", plan.SkippedCopies)
                 : L.F("Mods Menu용 복사본 {0}개는 설치하지 않습니다. 같은 모드가 모드 로더용으로도 들어 있습니다.", plan.SkippedCopies));
-        // Both loaders installed: whichever starts first runs, and Mods Menu then stays off.
+        // Both loaders can stay: Mods Menu says it normally starts first and runs the other's mods folder too.
         bool Has(string path) => plan.Items.Any(i => i.Path.Equals(path, StringComparison.OrdinalIgnoreCase));
-        if (Has(ModIdentity.LoaderBootstrap) && MenuInstalled)
-            plan.Warnings.Add(L.T("Mods Menu가 이미 설치되어 있습니다. 두 스크립트 로더가 함께 있으면 하나만 동작하니, 쓰지 않을 쪽은 제거해 주세요."));
-        if (Has(ModIdentity.MenuBootstrap) && LoaderInstalled)
-            plan.Warnings.Add(L.T("PBZModLoader가 이미 설치되어 있습니다. 두 스크립트 로더가 함께 있으면 하나만 동작하니, 쓰지 않을 쪽은 제거해 주세요."));
+        if ((Has(ModIdentity.LoaderBootstrap) && MenuInstalled) || (Has(ModIdentity.MenuBootstrap) && LoaderInstalled))
+            plan.Warnings.Add(L.T("PBZModLoader와 Mods Menu가 함께 설치됩니다. 둘 다 두어도 됩니다. 보통 Mods Menu가 먼저 시작해 PBZModLoader 폴더의 모드까지 함께 실행하고, PBZModLoader가 먼저 시작하면 Mods Menu는 꺼집니다."));
         if (plan.Placements.GetValueOrDefault(Placement.Pak) > 0)
             foreach (var home in new[] { LooseLayout.PakHome, LooseLayout.LogicModsHome })
                 if (plan.Items.Count(i => i.Path.StartsWith(home, StringComparison.OrdinalIgnoreCase) && !i.Path[home.Length..].Contains('/')) is > 0 and var paks)
@@ -1881,11 +1987,13 @@ public sealed class Manager
             plan.Warnings.Add(L.F("파일 {0}개를 게임 실행 파일(PBZ.exe) 옆인 platform/steam에 설치합니다.", beside));
         var unchosenFiles = plan.Placements.GetValueOrDefault(Placement.UnchosenLeftOut);
         var pictures = plan.Placements.GetValueOrDefault(Placement.PictureLeftOut);
-        if (unchosenFiles + pictures > 0)
+        var documents = plan.Placements.GetValueOrDefault(Placement.DocumentLeftOut);
+        if (unchosenFiles + pictures + documents > 0)
             plan.Warnings.Add(L.T("설치하지 않는 파일: ") + string.Join(", ", new[]
             {
                 unchosenFiles > 0 ? L.F("고르지 않은 옵션 {0}개", unchosenFiles) : null,
                 pictures > 0 ? L.F("설명 그림 {0}개", pictures) : null,
+                documents > 0 ? L.F("설명서 {0}개 (모드 정보의 [설명서 보기]로 볼 수 있음)", documents) : null,
             }.Where(s => s != null)));
 
         // Backups and new files together need at most the size of the archive contents twice.
@@ -2135,6 +2243,9 @@ public sealed class Manager
             tx.State = Tx.Installed;
             SaveTx(tx);
             Log(L.F("{0} #{1} {2} (추가 {3}, 덮어씀 {4}, 옛 파일 제거 {5})", (plan.ReplacesZip == null ? L.T("설치") : L.T("업데이트")), tx.Id, tx.ZipName, tx.Files.Count(f => !f.Overwrote), tx.Files.Count(f => f.Overwrote && !f.Deleted), plan.Stale.Count));
+            // A mod from a shared list takes its place in that list's order; the install stands either way.
+            try { PlaceBySharedOrder(); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException) { }
             return tx;
         }
         catch (Exception ex)

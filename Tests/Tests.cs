@@ -827,7 +827,7 @@ Test("menu layout: a Mods Menu mod installs to the loader's folder, updates and 
     Write(root, "ProjectPBZ/Content/JavaScript/PBZModLoader/bootstrap.js", "loader");
     var before = Snapshot(root);
     var m = new Manager(root);
-    var v1 = Zip(root, "Glow 1.0.zip", ("Glow-README.txt", "r"), (MenuMods, ""), (MenuMods + "Glow/", ""), (MenuMods + "Glow/main.js", "one"), (MenuMods + "Glow/old.js", "old"));
+    var v1 = Zip(root, "Glow 1.0.zip", ("Glow-extra.cfg", "r"), (MenuMods, ""), (MenuMods + "Glow/", ""), (MenuMods + "Glow/main.js", "one"), (MenuMods + "Glow/old.js", "old"));
 
     var plan = m.BuildPlan(v1);
     Check(plan.Relocated.Count == 2 && plan.Warnings.Any(w => w.Contains("Mods Menu")), "the preview says files move");
@@ -835,10 +835,10 @@ Test("menu layout: a Mods Menu mod installs to the loader's folder, updates and 
     var first = m.Install(plan);
     Check(File.ReadAllText(Path.Combine(root, LoaderMods, "Glow", "main.js")) == "one", "main.js is in the loader's folder");
     Check(!Directory.Exists(Path.Combine(root, "ProjectPBZ/Content/JavaScript/PBZModsMenu")), "no Mods Menu folder appears");
-    Check(File.Exists(Path.Combine(root, "Glow-README.txt")), "other files stay where the archive puts them");
+    Check(File.Exists(Path.Combine(root, "Glow-extra.cfg")), "other files stay where the archive puts them");
     Check(m.ListInstalled().Single().Key == "mods:glow" && ModIdentity.KeyOfZip(v1) == "mods:glow", "archive and install are the same mod");
 
-    var v2 = Zip(root, "Glow 2.0.zip", ("Glow-README.txt", "r"), (MenuMods + "Glow/main.js", "two"));
+    var v2 = Zip(root, "Glow 2.0.zip", ("Glow-extra.cfg", "r"), (MenuMods + "Glow/main.js", "two"));
     var update = m.BuildPlan(v2);
     Check(update.ReplacesZip == "Glow 1.0.zip" && update.Stale.Single().Path == LoaderMods + "Glow/old.js", "an update knows the old version and its leftover");
     var second = m.Install(update);
@@ -1062,18 +1062,18 @@ Test("exclude: unticked files are not installed, the choice carries over, and dr
 {
     var before = Snapshot(root);
     var m = new Manager(root);
-    var v1 = Zip(root, "Picky 1.0 302 1.0 2026-01-01T00-00Z a.zip", ("ProjectPBZ/Content/Paks/~mods/Picky_P.pak", "p1"), ("Picky-README.txt", "r"), ("LICENSE", "l"));
-    var plan = m.BuildPlan(v1, excluded: new[] { "Picky-README.txt" });
-    Check(plan.Excluded.SequenceEqual(new[] { "Picky-README.txt" }) && plan.Items.All(i => i.Path != "Picky-README.txt"), "left out of the plan");
+    var v1 = Zip(root, "Picky 1.0 302 1.0 2026-01-01T00-00Z a.zip", ("ProjectPBZ/Content/Paks/~mods/Picky_P.pak", "p1"), ("Picky-extra.cfg", "r"), ("LICENSE", "l"));
+    var plan = m.BuildPlan(v1, excluded: new[] { "Picky-extra.cfg" });
+    Check(plan.Excluded.SequenceEqual(new[] { "Picky-extra.cfg" }) && plan.Items.All(i => i.Path != "Picky-extra.cfg"), "left out of the plan");
     var first = m.Install(plan);
-    Check(!File.Exists(Path.Combine(root, "Picky-README.txt")) && File.Exists(Path.Combine(root, "LICENSE")), "left out of the game folder");
-    Check(m.PreviousExcluded(v1).SequenceEqual(new[] { "Picky-README.txt" }), "kept with the install");
+    Check(!File.Exists(Path.Combine(root, "Picky-extra.cfg")) && File.Exists(Path.Combine(root, "LICENSE")), "left out of the game folder");
+    Check(m.PreviousExcluded(v1).SequenceEqual(new[] { "Picky-extra.cfg" }), "kept with the install");
 
-    var v2 = Zip(root, "Picky 2.0 302 2.0 2026-02-01T00-00Z b.zip", ("ProjectPBZ/Content/Paks/~mods/Picky_P.pak", "p2"), ("Picky-README.txt", "r2"), ("LICENSE", "l"));
+    var v2 = Zip(root, "Picky 2.0 302 2.0 2026-02-01T00-00Z b.zip", ("ProjectPBZ/Content/Paks/~mods/Picky_P.pak", "p2"), ("Picky-extra.cfg", "r2"), ("LICENSE", "l"));
     var update = m.BuildPlan(v2);
-    Check(update.Excluded.SequenceEqual(new[] { "Picky-README.txt" }), "an update keeps the choice");
+    Check(update.Excluded.SequenceEqual(new[] { "Picky-extra.cfg" }), "an update keeps the choice");
 
-    var dropLicense = m.BuildPlan(v2, excluded: new[] { "Picky-README.txt", "LICENSE" });
+    var dropLicense = m.BuildPlan(v2, excluded: new[] { "Picky-extra.cfg", "LICENSE" });
     Check(dropLicense.Stale.Any(s => s.Path == "LICENSE"), "an installed file now unticked is removed");
     var second = m.Install(dropLicense);
     Check(!File.Exists(Path.Combine(root, "LICENSE")), "removed");
@@ -1208,8 +1208,11 @@ Test("runtime: the chosen loader decides where script mods go, and installed one
     Check(m.TargetRuntime == ScriptRuntime.Menu, "automatic follows what is installed");
 
     Write(root, "ProjectPBZ/Content/JavaScript/PBZModLoader/bootstrap.js", "loader");
+    Check(m.TargetRuntime == ScriptRuntime.Menu, "automatic with both installed: Mods Menu, which runs the other's mods too");
     var menu = Zip(root, "Mods Menu 0.8.1.zip", (MenuRoot + "bootstrap.js", "b2"));
-    Check(m.BuildPlan(menu).Warnings.Any(w => w.Contains("PBZModLoader가 이미 설치")), "installing one loader beside the other warns");
+    Check(m.BuildPlan(menu).Warnings.Any(w => w.Contains("둘 다 두어도 됩니다")) && m.BuildPlan(menu).Warnings.All(w => !w.Contains("제거해 주세요")),
+        "installing one loader beside the other says both may stay");
+    Check(m.BuildPlan(both).Items.Single().Path == MenuMods + "Both/main.js", "a mod packaged for both goes in once");
 });
 
 Test("tool: what an archive is made for", _ =>
@@ -1251,6 +1254,61 @@ Test("install notes: the install section of a description", _ =>
     var whole = InstallNotes.Extract("Installation<br />" + string.Join("<br />", steps) + "<br />Credits<br />me");
     Check(whole.Split('\n').Length == 61 && whole.EndsWith("Step 60: put the files where the loader reads them, then start the game and check the log.") && !whole.Contains('…'),
         $"a long section is not cut: {whole.Length} chars");
+});
+
+Test("sharing: a list round-trips as a file and as pasted text, anything else refused", _ =>
+{
+    var list = new SharedList
+    {
+        App = "1.4.0",
+        Mods =
+        {
+            new SharedMod { Key = "page:300:YoRHa 2B", Name = "YoRHa 2B", Url = "https://www.nexusmods.com/phantombladezero/mods/300", Version = "2.1", Pinned = true, Category = "Characters", Memo = "스커트 옵션", Installed = true },
+            new SharedMod { Name = "UUEPBS", Url = "https://github.com/XTGMods/UUEPBS", Version = "2.7.1" },
+        },
+        Order = { "sep:캐릭터", "page:300:YoRHa 2B" },
+    };
+    string Flat(SharedList l) => string.Join("|", l.Mods.Select(m => $"{m.Key},{m.Name},{m.Url},{m.Version},{m.Pinned},{m.Category},{m.Memo},{m.Installed}")) + "#" + string.Join(",", l.Order);
+    Check(Flat(ModListShare.Read(ModListShare.ToJson(list))) == Flat(list), "file round-trip");
+    var text = ModListShare.ToText(list);
+    Check(text.Contains("YoRHa 2B 2.1 고정") && Flat(ModListShare.Read("chat said:\n" + text + "\nthanks")) == Flat(list), "pasted text round-trip, with words around it: " + text.Split('\n')[1]);
+    foreach (var bad in new[] { "hello", "{\"format\":\"other\",\"version\":1,\"mods\":[]}", "pbzmods:@@@", "" })
+    {
+        var refused = false;
+        try { ModListShare.Read(bad); } catch (InvalidOperationException) { refused = true; }
+        Check(refused, "refused: " + bad);
+    }
+});
+
+Test("sharing: the file of a pinned version, old versions included", _ =>
+{
+    var files = new[]
+    {
+        new NexusFile("YoRHa 2B Replace Soul", "2.0", "OLD_VERSION", "900"), new NexusFile("YoRHa 2B Replace Soul", "2.1", "MAIN", "950"),
+        new NexusFile("Other file", "2.0", "MAIN", "999"),
+    };
+    Check(NexusApi.ChooseFileForVersion("YoRHa 2B Replace Soul", files, "2.0") == "900", "old version's file");
+    Check(NexusApi.ChooseFileForVersion("YoRHa 2B Replace Soul", files, "2.1") == "950", "current file");
+    Check(NexusApi.ChooseFileForVersion("YoRHa 2B Replace Soul", files, "1.0") == "", "no such version");
+    Check(NexusApi.ChooseFileForVersion("Page title", files, "2.1") == "950", "a name the files do not use: any file of that version");
+});
+
+Test("sharing: a shared order places mods as the user installs them", root =>
+{
+    var m = new Manager(root);
+    var a = Zip(root, "Alpha 1.0 11 1.0 2026-01-01T00-00Z a.zip", ("ProjectPBZ/Content/Paks/~mods/A_P.pak", "a"));
+    var b = Zip(root, "Beta 1.0 12 1.0 2026-01-01T00-00Z b.zip", ("ProjectPBZ/Content/Paks/~mods/B_P.pak", "b"));
+    var c = Zip(root, "Gamma 1.0 13 1.0 2026-01-01T00-00Z c.zip", ("ProjectPBZ/Content/Paks/~mods/C_P.pak", "c"));
+    Install(m, a);
+    m.SaveSharedOrder(new[] { "sep:Graphics", ModIdentity.KeyOfZip(b), ModIdentity.KeyOfZip(a), "sep:UI", ModIdentity.KeyOfZip(c) });
+    Install(m, b);
+    Install(m, c);
+    string Rows() => string.Join(", ", m.InstalledRows().Select(r => r.Text));
+    Check(Rows() == "Graphics, Beta, Alpha, UI, Gamma", "placed with the shared separators: " + Rows());
+    m.MoveInstalled(ModIdentity.KeyOfZip(c), -4);
+    m.ApplySharedOrder();
+    Check(Rows() == "Graphics, Beta, Alpha, UI, Gamma", "put back in the shared order: " + Rows());
+    Check(m.OrderToShare(new HashSet<string> { ModIdentity.KeyOfZip(a) }).SequenceEqual(new[] { "sep:Graphics", ModIdentity.KeyOfZip(a), "sep:UI" }), "order shared for the mods chosen");
 });
 
 Test("nexus: a file's category, main or optional, from its current version", _ =>
@@ -1476,6 +1534,44 @@ Test("malicious archive paths are rejected before any change", root =>
     Check(dupRejected, "case-duplicate not rejected");
     SameTree(before, Snapshot(root));
     Check(!File.Exists(Path.Combine(work, "evil.txt")), "escaped");
+});
+
+Test("readmes: left out of the install beside paks, kept where a mod may read them, listed to read", root =>
+{
+    var m = new Manager(root);
+    var zip = Zip(root, "Some Mod 900 1.0 2026-11-07T00-00Z a.zip",
+        ("~mods/Some_P.pak", "p"),
+        ("README.txt", "read me"),
+        ("설치 방법.pdf", "%PDF"),
+        ("notes.txt", "beside the pak"),
+        ("preset.json", "{}"),
+        ("Docs/Changelog.md", "# 1.0"),
+        ("ProjectPBZ/Content/readme.txt", "laid out by the author"));
+    var plan = m.BuildPlan(zip);
+    var paths = plan.Items.Select(i => i.Path).ToList();
+    Check(!paths.Any(p => p.EndsWith("README.txt") || p.EndsWith(".pdf") || p.EndsWith("notes.txt") || p.EndsWith("Changelog.md")), "readmes left out: " + string.Join(", ", paths));
+    Check(paths.Contains("preset.json") && paths.Contains("ProjectPBZ/Content/readme.txt") && paths.Contains("ProjectPBZ/Content/Paks/~mods/Some_P.pak"), "the rest installed: " + string.Join(", ", paths));
+    Check(plan.Placements.GetValueOrDefault(Placement.DocumentLeftOut) == 4, "four counted");
+    Check(plan.Warnings.Any(w => w.Contains("설명서 4개")), "warned: " + string.Join(" | ", plan.Warnings));
+
+    var lua = Zip(root, "Lua Mod.zip", ("LuaMod/Scripts/main.lua", "x"), ("LuaMod/readme.txt", "kept"), ("LuaMod/Scripts/data.txt", "kept"));
+    var luaPaths = m.BuildPlan(lua).Items.Select(i => i.Path).ToList();
+    Check(luaPaths.Any(p => p.EndsWith("LuaMod/readme.txt")) && luaPaths.Any(p => p.EndsWith("Scripts/data.txt")), "a UE4SS mod's folder keeps its files: " + string.Join(", ", luaPaths));
+
+    var listed = Manager.DocumentsIn(zip);
+    Check(listed.SequenceEqual(new[] { "Docs/Changelog.md", "ProjectPBZ/Content/readme.txt", "README.txt", "설치 방법.pdf", "notes.txt" }), "listed, named first: " + string.Join(", ", listed));
+    Check(Manager.DocumentsIn(lua).SequenceEqual(new[] { "LuaMod/readme.txt" }), "script data is not a readme: " + string.Join(", ", Manager.DocumentsIn(lua)));
+});
+
+Test("readmes: text is read in its own encoding", _ =>
+{
+    System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
+    const string words = "설치 방법: ~mods 폴더에 넣으세요";
+    Check(Manager.ReadDocumentText(System.Text.Encoding.UTF8.GetBytes(words)) == words, "utf-8");
+    Check(Manager.ReadDocumentText(System.Text.Encoding.UTF8.GetPreamble().Concat(System.Text.Encoding.UTF8.GetBytes(words)).ToArray()) == words, "utf-8 with mark");
+    Check(Manager.ReadDocumentText(System.Text.Encoding.Unicode.GetPreamble().Concat(System.Text.Encoding.Unicode.GetBytes(words)).ToArray()) == words, "utf-16");
+    Check(Manager.ReadDocumentText(System.Text.Encoding.GetEncoding(949).GetBytes(words)) == words, "cp949");
+    Check(Manager.PlainFromHtml("<html><style>p{}</style><p>A&amp;B</p><script>x()</script>C<br>D</html>") == "A&B\nC\nD", "html words: " + Manager.PlainFromHtml("<p>A&amp;B</p>C<br>D"));
 });
 
 Test("wrapped archive produces a warning", root =>
