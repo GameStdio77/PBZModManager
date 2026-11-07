@@ -9,7 +9,7 @@
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
     <AssemblyName>PBZModManager</AssemblyName>
     <RootNamespace>PBZModManager</RootNamespace>
-    <Version>1.4.0</Version>
+    <Version>1.5.0</Version>
     <Product>PBZ Mod Manager</Product>
     <Authors>GameStdio77</Authors>
     <Copyright>Copyright (C) 2026 GameStdio77, GPL-3.0</Copyright>
