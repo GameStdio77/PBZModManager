@@ -23,7 +23,8 @@ Phantom Blade Zero(팬텀 블레이드 제로)용 모드 매니저입니다. 받
   - pak 모드는 `Content/Paks/~mods`, 블루프린트 모드는 `Content/Paks/LogicMods`
   - "(choose one)"처럼 같은 파일을 쓰는 옵션 폴더는 묶음마다 하나씩 골라 설치
 - **Nexus 정보 자동 입력**: 모드 주소를 넣으면 Nexus 공개 API로 카테고리와 설명의 설치 방법을 가져옵니다.
-- **최신 버전 확인**: Nexus Mods와 GitHub 릴리스에서 새 버전이 있는지 확인하고, 다운로드 페이지를 열어 줍니다.
+- **최신 버전 확인**: Nexus Mods와 GitHub 릴리스에서 새 버전이 있는지 확인하고, 다운로드 페이지를 열어 줍니다. 모드 하나만 확인하거나, 원하는 모드를 확인에서 뺄 수 있습니다.
+- **우클릭 메뉴**: 모드 목록과 설치된 모드에서 모드를 우클릭하면 설치·제거, 이 모드만 최신 버전 확인, 업데이트 확인 안 함, 다운로드·모드 페이지 열기, 설명서 보기, 압축 파일 위치 열기, 다른 목록에서 찾기 등을 바로 할 수 있습니다.
 - **버전 관리**: 같은 모드의 여러 버전을 한 모드로 묶어 업데이트·다운그레이드하고, 이전 버전 파일을 정리(휴지통으로)할 수 있습니다. 제작자가 Nexus에서 파일 이름을 바꿔도 같은 모드의 새 버전으로 이어집니다.
 - **모드 이름**: 파일 이름 대신 Nexus 페이지 제목으로 보여 줍니다. 한 페이지에서 받은 파일이 여럿이면 페이지 제목 아래에 파일 이름으로 나뉩니다. 모드 정보의 [표시 이름]에 직접 적은 이름이 가장 먼저 쓰입니다.
 - **정리 도구**: 설치된 모드 순서 바꾸기와 이름 붙인 구분선, 한 줄 메모, 여러 모드 한 번에 설치·제거
@@ -94,7 +95,8 @@ A mod manager for Phantom Blade Zero. It installs downloaded mod archives where 
   - pak mods in `Content/Paks/~mods`, Blueprint mods in `Content/Paks/LogicMods`
   - "(choose one)" option folders that share files: one per group
 - **Nexus info filled in**: enter a mod's address and its category and install steps are fetched with the public Nexus API.
-- **Update check**: checks Nexus Mods and GitHub releases for newer versions and opens the download page.
+- **Update check**: checks Nexus Mods and GitHub releases for newer versions and opens the download page. Check one mod alone, or keep chosen mods out of checks.
+- **Right-click menus**: right-click a mod in either list to install or remove it, check just that mod, stop update checks for it, open its download or mod page, read its readme, show its archive in the folder, or find it in the other list.
 - **Versions**: several versions of a mod are one mod to update or downgrade; old version files can be cleaned up (to the Recycle Bin). A file the author renamed on Nexus carries on as the next version of the same mod.
 - **Mod names**: mods go by their Nexus page title rather than the file name. Several files from one page sit under the page title by their file names. A name typed in [Display name] in the mod info comes first.
 - **Organizing**: reorder installed mods, named separators, one-line memos, install or remove several mods at once
@@ -165,7 +167,8 @@ Phantom Blade Zero（影之刃零）的模组管理器。它会把下载的模�
   - pak 模组放在 `Content/Paks/~mods`，蓝图模组放在 `Content/Paks/LogicMods`
   - 像“(choose one)”这样共用文件的选项文件夹，每组选一个安装
 - **自动填写 Nexus 信息**：填写模组地址后，会通过 Nexus 公开 API 获取分类和说明中的安装方法。
-- **检查最新版本**：在 Nexus Mods 和 GitHub Releases 上检查是否有新版本，并打开下载页面。
+- **检查最新版本**：在 Nexus Mods 和 GitHub Releases 上检查是否有新版本，并打开下载页面。可以只检查一个模组，也可以把选定的模组排除在检查之外。
+- **右键菜单**：在模组列表和已安装模组中右键单击模组，可直接安装或移除、仅检查此模组、不检查更新、打开下载或模组页面、查看说明、打开压缩包位置、在另一个列表中查找等。
 - **版本管理**：同一模组的多个版本作为一个模组来更新或降级，旧版本文件可以清理（移到回收站）。作者在 Nexus 上改了文件名时，也会作为同一模组的新版本继续管理。
 - **模组名称**：以 Nexus 页面标题而不是文件名显示。同一页面下载的多个文件会在页面标题下按文件名分开。在模组信息的 [显示名称] 中填写的名称优先使用。
 - **整理工具**：调整已安装模组的顺序、带名称的分隔线、一行备注、一次安装或移除多个模组
@@ -236,7 +239,8 @@ Phantom Blade Zero 用の Mod マネージャーです。ダウンロードし�
   - pak Mod は `Content/Paks/~mods`、ブループリント Mod は `Content/Paks/LogicMods`
   - 「(choose one)」のように同じファイルを使うオプションフォルダーは、グループごとに 1 つ選んでインストール
 - **Nexus の情報を自動入力**：Mod のアドレスを入れると、Nexus の公開 API でカテゴリーと説明文のインストール方法を取得します。
-- **最新バージョン確認**：Nexus Mods と GitHub のリリースで新しいバージョンがあるか確認し、ダウンロードページを開きます。
+- **最新バージョン確認**：Nexus Mods と GitHub のリリースで新しいバージョンがあるか確認し、ダウンロードページを開きます。1 つの Mod だけ確認したり、選んだ Mod を確認から外したりできます。
+- **右クリックメニュー**：Mod 一覧とインストール済み Mod で Mod を右クリックすると、インストール・削除、この Mod だけ最新バージョン確認、更新を確認しない、ダウンロード・Mod ページを開く、説明書を見る、圧縮ファイルの場所を開く、もう一方の一覧で探すなどがすぐにできます。
 - **バージョン管理**：同じ Mod の複数バージョンを 1 つの Mod として更新・ダウングレードし、旧バージョンのファイルを整理（ごみ箱へ）できます。作者が Nexus でファイル名を変えても、同じ Mod の新バージョンとして引き継ぎます。
 - **Mod 名**：ファイル名ではなく Nexus のページタイトルで表示します。同じページから入手したファイルが複数あれば、ページタイトルの下にファイル名で分かれます。Mod 情報の [表示名] に入力した名前が最優先です。
 - **整理ツール**：インストール済み Mod の並べ替え、名前付きの区切り線、1 行メモ、複数の Mod の一括インストール・削除

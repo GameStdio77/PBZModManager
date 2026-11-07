@@ -634,6 +634,97 @@ public sealed class DarkComboBox : ComboBox
 }
 
 /// <summary>
+/// A splitter that shows where it is: a faint line, brighter under the mouse. It moves the panels as it is
+/// dragged instead of drawing the system's dotted bar, and takes no focus, so no dotted frame stays on it.
+/// </summary>
+public sealed class DarkSplitContainer : SplitContainer
+{
+    // Where in the splitter the mouse took hold; -1 when not dragging.
+    int grab = -1;
+    bool hover;
+
+    public DarkSplitContainer()
+    {
+        SetStyle(ControlStyles.Selectable, false);
+        SetStyle(ControlStyles.OptimizedDoubleBuffer | ControlStyles.AllPaintingInWmPaint | ControlStyles.ResizeRedraw, true);
+        TabStop = false;
+    }
+
+    bool Vertical => Orientation == Orientation.Vertical;
+    int At(MouseEventArgs e) => Vertical ? e.X : e.Y;
+
+    protected override void OnMouseDown(MouseEventArgs e)
+    {
+        if (e.Button == MouseButtons.Left && !IsSplitterFixed && SplitterRectangle.Contains(e.Location))
+        {
+            grab = At(e) - SplitterDistance;
+            Capture = true;
+            Invalidate(SplitterRectangle);
+            return;
+        }
+        base.OnMouseDown(e);
+    }
+
+    protected override void OnMouseMove(MouseEventArgs e)
+    {
+        if (grab >= 0)
+        {
+            int size = Vertical ? Width : Height;
+            int wanted = Math.Clamp(At(e) - grab, Panel1MinSize, Math.Max(Panel1MinSize, size - Panel2MinSize - SplitterWidth));
+            if (wanted != SplitterDistance)
+            {
+                // Said before each step, so whoever listens knows the user moved it.
+                OnSplitterMoving(new SplitterCancelEventArgs(e.X, e.Y, Vertical ? wanted : e.X, Vertical ? e.Y : wanted));
+                SplitterDistance = wanted;
+            }
+            return;
+        }
+        var over = !IsSplitterFixed && SplitterRectangle.Contains(e.Location);
+        Cursor = over ? (Vertical ? Cursors.VSplit : Cursors.HSplit) : Cursors.Default;
+        if (over != hover)
+        {
+            hover = over;
+            Invalidate(SplitterRectangle);
+        }
+    }
+
+    protected override void OnMouseUp(MouseEventArgs e)
+    {
+        if (grab >= 0)
+        {
+            grab = -1;
+            Capture = false;
+            Invalidate(SplitterRectangle);
+            return;
+        }
+        base.OnMouseUp(e);
+    }
+
+    protected override void OnMouseLeave(EventArgs e)
+    {
+        base.OnMouseLeave(e);
+        if (grab < 0 && hover)
+        {
+            hover = false;
+            Cursor = Cursors.Default;
+            Invalidate(SplitterRectangle);
+        }
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        var bar = SplitterRectangle;
+        using (var back = new SolidBrush(Theme.Background)) e.Graphics.FillRectangle(back, bar);
+        using var line = new SolidBrush(grab >= 0 ? Theme.Muted : hover ? Theme.Dim : Theme.Border);
+        // A line along the middle, kept off the panels' frames at either end.
+        var thin = Vertical
+            ? new Rectangle(bar.X + bar.Width / 2, bar.Y + 8, 1, Math.Max(0, bar.Height - 16))
+            : new Rectangle(bar.X + 8, bar.Y + bar.Height / 2, Math.Max(0, bar.Width - 16), 1);
+        e.Graphics.FillRectangle(line, thin);
+    }
+}
+
+/// <summary>
 /// Shows a control with <see cref="DarkScrollBar"/> instead of its native scrollbar, which cannot be
 /// colored. The control is laid out wider than the host, so the native bar falls outside and is clipped.
 /// </summary>

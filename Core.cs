@@ -1111,9 +1111,11 @@ public sealed class ModMeta
     public string PageName { get; set; } = "";
     /// <summary>The name the user gave the mod in the list; it comes before the page's title and the file's name.</summary>
     public string DisplayName { get; set; } = "";
+    /// <summary>The user keeps this mod out of version checks: no newer version is looked for or offered.</summary>
+    public bool NoUpdateCheck { get; set; }
 
     public bool IsEmpty() => !Registered && Category.Length == 0 && Url.Length == 0 && Memo.Length == 0 && Tool.Length == 0 && InstallNotes.Length == 0
-        && PageName.Length == 0 && DisplayName.Length == 0;
+        && PageName.Length == 0 && DisplayName.Length == 0 && !NoUpdateCheck;
 
     /// <summary>
     /// Brings notes from before install steps had their own place: steps that were put in the memo move out,

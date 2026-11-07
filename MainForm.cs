@@ -2,7 +2,7 @@
 
 namespace PBZModManager;
 
-public sealed class MainForm : Form, IMessageFilter
+public sealed partial class MainForm : Form, IMessageFilter
 {
     readonly Manager manager;
     readonly Dictionary<string, ModMeta> meta;
@@ -60,6 +60,10 @@ public sealed class MainForm : Form, IMessageFilter
     readonly Label statusLabel = new() { AutoSize = true, Dock = DockStyle.Left, Padding = new Padding(8, 5, 8, 5), ForeColor = Theme.Muted, Text = L.T("준비") };
 
     List<ModGroup> mods = new();
+    /// <summary>The height the user gave the mod info and file panels; the lists above take the rest.</summary>
+    int lowerHeight;
+    /// <summary>The least the lists above keep when the window is short.</summary>
+    const int MinListHeight = 140;
     List<InstalledMod> installed = new();
     List<InstalledRow> installedRows = new();
     List<Tx> history = new();
@@ -127,7 +131,7 @@ public sealed class MainForm : Form, IMessageFilter
         filterBox.Width = 130;
 
         // Left: the mod list over its info. Right: what is installed over its files.
-        var zipSplit = new SplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Horizontal, FixedPanel = FixedPanel.Panel2 };
+        var zipSplit = new DarkSplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Horizontal, FixedPanel = FixedPanel.Panel2 };
         Theme.StyleSplit(zipSplit);
         var zipGroup = Theme.Group(L.T("모드 목록 (여기에 끌어다 놓아 추가)"), zipList,
             new Control[] { installButton, addButton, addByAddressButton, checkLatestButton, refreshButton, unlistButton, deleteFileButton, cleanVersionsButton, shareButton, importButton },
@@ -136,12 +140,12 @@ public sealed class MainForm : Form, IMessageFilter
         zipSplit.Panel2.Controls.Add(Theme.Group(L.T("모드 정보"), infoEditor));
         EnableFileDrop(zipGroup);
 
-        var lower = new SplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Horizontal };
+        var lower = new DarkSplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Horizontal, FixedPanel = FixedPanel.Panel2 };
         Theme.StyleSplit(lower);
         lower.Panel1.Controls.Add(Theme.Group(L.T("설치된 모드"), installedList, removeButton, optionsButton, moveUpButton, moveDownButton, separatorButton, openLeftoversButton, clearLeftoversButton));
         lower.Panel2.Controls.Add(Theme.Group(L.T("선택한 모드의 파일"), fileList));
 
-        var main = new SplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Vertical };
+        var main = new DarkSplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Vertical };
         Theme.StyleSplit(main);
         main.Panel1.Controls.Add(zipSplit);
         main.Panel2.Controls.Add(lower);
@@ -161,16 +165,40 @@ public sealed class MainForm : Form, IMessageFilter
         PlaceWindow();
 
         // The mod list and the installed list keep one height: moving either splitter moves the other.
-        bool syncing = false;
+        // The panels under them keep the height the user dragged them to while the window changes size; a window
+        // too short for it squeezes them for now, and they get their height back when the window grows again.
+        bool syncing = false, dragging = false;
         void Follow(SplitContainer from, SplitContainer to)
         {
+            // Only a move the user made, by mouse or keys, sets the height; the window's own resizing does not.
+            if (!syncing && dragging)
+            {
+                dragging = false;
+                lowerHeight = from.Height - from.SplitterDistance - from.SplitterWidth;
+            }
             if (syncing || to.SplitterDistance == from.SplitterDistance) return;
             syncing = true;
             SetSplit(to, from.SplitterDistance, to.SplitterDistance);
             syncing = false;
         }
+        void KeepLowerHeight()
+        {
+            if (lowerHeight <= 0 || syncing) return;
+            syncing = true;
+            foreach (var split in new[] { zipSplit, lower })
+            {
+                int room = split.Height - split.SplitterWidth;
+                int height = Math.Max(split.Panel2MinSize, Math.Min(lowerHeight, room - MinListHeight));
+                if (split.SplitterDistance != room - height) SetSplit(split, room - height, split.SplitterDistance);
+            }
+            syncing = false;
+        }
         zipSplit.SplitterMoved += (_, _) => Follow(zipSplit, lower);
         lower.SplitterMoved += (_, _) => Follow(lower, zipSplit);
+        zipSplit.SplitterMoving += (_, _) => dragging = true;
+        lower.SplitterMoving += (_, _) => dragging = true;
+        zipSplit.SizeChanged += (_, _) => KeepLowerHeight();
+        lower.SizeChanged += (_, _) => KeepLowerHeight();
         zipList.MultiSelect = true;
         installedList.MultiSelect = true;
 
@@ -180,6 +208,7 @@ public sealed class MainForm : Form, IMessageFilter
             SetSplit(main, saved?.MainSplit ?? 0, main.Width / 2);
             SetSplit(zipSplit, saved?.LeftSplit ?? 0, Math.Max(200, zipSplit.Height - 330));
             SetSplit(lower, zipSplit.SplitterDistance, zipSplit.SplitterDistance);
+            lowerHeight = zipSplit.Height - zipSplit.SplitterDistance - zipSplit.SplitterWidth;
             // Archives earlier versions kept beside the program move into the records once.
             if (Directory.EnumerateFiles(manager.ModDir, "*.zip").Any())
                 await Run(L.T("모드 파일 옮기는 중..."), p => manager.MoveArchivesIn(p));
@@ -211,6 +240,7 @@ public sealed class MainForm : Form, IMessageFilter
         moveDownButton.Click += async (_, _) => await MoveSelected(1);
         refreshButton.Click += async (_, _) => await RefreshAll();
         checkLatestButton.Click += async (_, _) => await CheckLatest();
+        BuildMenus();
         infoEditor.DownloadRequested += async () =>
         {
             await Task.Yield();
@@ -885,7 +915,7 @@ public sealed class MainForm : Form, IMessageFilter
     /// A file name without a version, such as "Wuchang Volice 2.zip", says nothing to compare unless the source
     /// recognised the file by its checksum, as GitHub can; otherwise it is never called outdated.
     RemoteInfo? NewerOnNexus(ModGroup mod) =>
-        PinnedOf(mod).Length == 0 && remote.TryGetValue(mod.Key, out var info) && LocalVersionOf(mod) is { Length: > 0 } local
+        PinnedOf(mod).Length == 0 && !IgnoresUpdates(mod) && remote.TryGetValue(mod.Key, out var info) && LocalVersionOf(mod) is { Length: > 0 } local
         && ModIdentity.CompareVersions(info.Version, local) > 0 ? info : null;
 
     /// <summary>The newest local version: from its file name, or as the source recognised the file.</summary>
@@ -922,21 +952,26 @@ public sealed class MainForm : Form, IMessageFilter
         }
     }
 
-    /// <summary>Asks Nexus, and GitHub for mods kept there, about every listed mod. Only ever runs from the button.</summary>
-    async Task CheckLatest()
+    /// <summary>
+    /// Asks Nexus, and GitHub for mods kept there, about the listed mods, or only the ones given. Mods the user
+    /// keeps out of checks are left alone. Only ever runs at the user's asking.
+    /// </summary>
+    async Task CheckLatest(IReadOnlyCollection<ModGroup>? only = null)
     {
-        var targets = mods.Select(m => (m.Key, m.Name, File: m.InstalledFile ?? m.Latest.FileName, Link: LinkOf(m)))
+        var pool = (only ?? mods).Where(m => !IgnoresUpdates(m)).ToList();
+        var asked = pool.Select(m => m.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var targets = pool.Select(m => (m.Key, m.Name, File: m.InstalledFile ?? m.Latest.FileName, Link: LinkOf(m)))
             .Where(t => t.Link != null)
             .Select(t => (t.Key, t.Name, t.File, Link: t.Link!))
             .ToList();
-        var onGitHub = mods.Where(m => targets.All(t => t.Key != m.Key) && GitHubOf(m) != null)
+        var onGitHub = pool.Where(m => targets.All(t => t.Key != m.Key) && GitHubOf(m) != null)
             .Select(m => (m.Key, m.Name, Repo: GitHubOf(m)!, Zip: m.Latest.Missing ? null : m.Latest.Path))
             .ToList();
-        var unknown = mods.Where(m => targets.All(t => t.Key != m.Key) && onGitHub.All(g => g.Key != m.Key)).Select(m => m.Name).ToList();
+        var unknown = pool.Where(m => targets.All(t => t.Key != m.Key) && onGitHub.All(g => g.Key != m.Key)).Select(m => m.Name).ToList();
         if (targets.Count == 0 && onGitHub.Count == 0)
         {
             // Nothing has an address any more, so no old result still applies.
-            if (mods.Any(m => remote.Remove(m.Key)))
+            if (pool.Count(m => remote.Remove(m.Key)) > 0)
             {
                 SaveRemoteQuietly();
                 RenderZips();
@@ -976,7 +1011,7 @@ public sealed class MainForm : Form, IMessageFilter
         if (found == null) return;
 
         // A listed mod this check gave nothing for, with no address or one the source does not know, keeps no old result.
-        foreach (var mod in mods.Where(m => !found.ContainsKey(m.Key) && !unreachable.Contains(m.Name))) remote.Remove(mod.Key);
+        foreach (var mod in pool.Where(m => !found.ContainsKey(m.Key) && !unreachable.Contains(m.Name))) remote.Remove(mod.Key);
         foreach (var pair in found) remote[pair.Key] = pair.Value;
         SaveRemoteQuietly();
         // The file under its new name will be the same mod, as long as it is not already listed as another.
@@ -1009,7 +1044,7 @@ public sealed class MainForm : Form, IMessageFilter
         await RefreshAll();
         LoadNote(force: true);
 
-        var newer = mods.Where(m => NewerOnNexus(m) != null).ToList();
+        var newer = mods.Where(m => asked.Contains(m.Key) && NewerOnNexus(m) != null).ToList();
         var missing = targets.Where(t => !found.ContainsKey(t.Key)).Select(t => t.Name)
             .Concat(onGitHub.Where(g => !found.ContainsKey(g.Key) && !unreachable.Contains(g.Name)).Select(g => g.Name))
             .Concat(unknown).ToList();
@@ -1756,6 +1791,7 @@ public sealed class MainForm : Form, IMessageFilter
         var newer = NewerOnNexus(mod);
         if (newer != null) status = L.F("{0}에 {1} 있음 · {2}", SourceName(newer), newer.Version, status);
         if (PinnedOf(mod) is { Length: > 0 } pinned) status += " · " + L.F("{0} 고정", pinned);
+        if (IgnoresUpdates(mod)) status += " · " + L.T("업데이트 확인 안 함");
         var missing = mod.Versions.All(v => v.Missing) ? L.T("파일 없음") : mod.Versions.Any(v => v.Missing) ? L.T("일부 파일 없음") : null;
         if (missing != null) status = $"{missing} · {status}";
         var shownVersion = mod.Latest.Version.Length > 0 ? mod.Latest.Version : LocalVersionOf(mod) is { Length: > 0 } known ? $"({known})" : "";
