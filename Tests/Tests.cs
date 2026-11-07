@@ -1391,6 +1391,75 @@ Test("update link: the newest file in the user's variant, and the address it ope
     Check(link.DownloadUrl("") == "https://www.nexusmods.com/phantombladezero/mods/113?tab=files", "file list when no number is known");
 });
 
+Test("files renamed on Nexus: the new name is followed, else the page's newest (live 385)", _ =>
+{
+    // Mod 385 as Nexus answered on 2026-11-07: "for 2B" became "For 2B(Original)", "For SoulVerR" became "For Ver.R".
+    const string json = """
+    {"data": {"legacyModsByDomain": {"nodes": [{"modId": 385, "version": "7", "status": "published"}]}, "m385": [{"fileId": 1048, "name": "PBZ FemaleAnimation", "version": "1", "category": "OLD_VERSION"}, {"fileId": 1322, "name": "PBZ FemaleAnimation OtherBodies", "version": "1", "category": "OLD_VERSION"}, {"fileId": 1323, "name": "PBZ FemaleAnimation for 2B", "version": "2", "category": "OLD_VERSION"}, {"fileId": 1342, "name": "PBZ FemaleAnimation for 2B", "version": "3", "category": "OLD_VERSION"}, {"fileId": 1343, "name": "PBZ FemaleAnimation OtherBodies", "version": "3", "category": "OLD_VERSION"}, {"fileId": 1509, "name": "PBZ FemaleAnimation OtherBodies", "version": "4", "category": "OLD_VERSION"}, {"fileId": 1510, "name": "PBZ FemaleAnimation Original Idle", "version": "1", "category": "OLD_VERSION"}, {"fileId": 2304, "name": "PBZ FemaleAnimation Original Idle", "version": "6", "category": "OLD_VERSION"}, {"fileId": 2305, "name": "PBZ FemaleAnimation OtherBodies", "version": "6", "category": "OLD_VERSION"}, {"fileId": 2306, "name": "PBZ FemaleAnimation for 2B(my personal edit)", "version": "6", "category": "OLD_VERSION"}, {"fileId": 2307, "name": "PBZ FemaleAnimation For SoulVerR", "version": "5", "category": "OLD_VERSION"}, {"fileId": 2333, "name": "PBZ FemaleAnimation For Ver.R", "version": "6", "category": "OLD_VERSION"}, {"fileId": 2350, "name": "PBZ FemaleAnimation For 2B(Original)", "version": "6", "category": "OLD_VERSION"}, {"fileId": 2354, "name": "PBZ FemaleAnimation For 2B(Original)", "version": "6.1", "category": "OLD_VERSION"}, {"fileId": 2359, "name": "PBZ FemaleAnimation For 2B(Original)", "version": "7", "category": "MAIN"}, {"fileId": 2360, "name": "PBZ FemaleAnimation For Ver.R", "version": "7", "category": "MAIN"}, {"fileId": 2361, "name": "PBZ FemaleAnimation for 2B(my personal edit)", "version": "7", "category": "OPTIONAL"}, {"fileId": 2362, "name": "PBZ FemaleAnimation OtherBodies", "version": "7", "category": "MAIN"}, {"fileId": 2363, "name": "PBZ FemaleAnimation Original Idle", "version": "7", "category": "MAIN"}]}}
+    """;
+    var parsed = NexusApi.ParseResponse(json, new List<(string, string, string, string)>
+    {
+        ("2b", "PBZ FemaleAnimation for 2B", "PBZ FemaleAnimation for 2B 385 5 2026-11-06T19-35Z ckMvdFXLI.zip", "385"),
+        ("soul", "PBZ FemaleAnimation For SoulVerR", "PBZ FemaleAnimation For SoulVerR 385 5 2026-11-06T19-36Z UXaYxe4HY.zip", "385"),
+        ("other", "PBZ FemaleAnimation OtherBodies", "PBZ FemaleAnimation OtherBodies 385 6 2026-11-06T19-36Z a.zip", "385"),
+    });
+    var b = parsed["2b"];
+    Check(b.Version == "7" && b.FileId == "2359" && b.RenamedTo == "PBZ FemaleAnimation For 2B(Original)" && b.FileCategory == "MAIN" && !b.Retired,
+        $"2B follows its new name, the main file: {b.Version} {b.FileId} {b.RenamedTo} {b.FileCategory}");
+    var s = parsed["soul"];
+    Check(s.Retired && s.Version == "7" && s.FileId == "" && !s.MatchedFile && s.RenamedTo == "", $"SoulVerR: only old versions left, the page's newest and its file list: {s.Version} {s.FileId}");
+    var o = parsed["other"];
+    Check(o.Version == "7" && o.FileId == "2362" && o.RenamedTo == "" && !o.Retired, $"a file still current is as before: {o.Version} {o.FileId}");
+});
+
+Test("a file renamed on its page carries on its mod: grouped, updated, remembered", root =>
+{
+    var m = new Manager(root);
+    const string oldName = "PBZ FemaleAnimation for 2B 385 5 2026-11-06T19-35Z ckMvdFXLI.zip";
+    const string newName = "PBZ FemaleAnimation For 2B(Original) 385 7 2026-11-08T00-00Z abcdEFGH.zip";
+    var oldZip = Zip(root, oldName, ("ProjectPBZ/Content/Paks/~mods/zzzz_Female Animation_P.pak", "5"), ("ProjectPBZ/Content/Paks/~mods/zzzz_Old_Only_P.pak", "o"));
+    var newZip = Zip(root, newName, ("ProjectPBZ/Content/Paks/~mods/zzzz_Female Animation_P.pak", "7"));
+    var oldKey = ModIdentity.KeyOfZip(oldZip);
+    var v5 = Install(m, oldZip);
+    Check(ModIdentity.KeyOfZip(newZip) != oldKey, "apart before they are joined");
+
+    var newKey = ModIdentity.PageKey("385", ModIdentity.ParseFileName("PBZ FemaleAnimation For 2B(Original).zip").Name);
+    Check(newKey == ModIdentity.KeyOfZip(newZip), "the key made from the new name is the download's: " + newKey);
+    Check(m.LinkRename(newKey, oldKey), "joined");
+    Check(!m.LinkRename(newKey, oldKey) && !m.LinkRename(oldKey, newKey), "joining again, or back the other way, changes nothing");
+    Check(ModIdentity.KeyOfZip(newZip) == oldKey, "the new file's key leads to the mod it was");
+
+    var meta = new Dictionary<string, ModMeta> { [oldName] = new() { Registered = true }, [newName] = new() { Registered = true } };
+    var group = m.ListMods(meta).Single();
+    Check(group.Key == oldKey && group.Versions.Count == 2 && group.Latest.FileName == newName && group.UpdateAvailable, "one mod, the new file its newest version, an update offered");
+
+    var plan = m.BuildPlan(newZip);
+    Check(plan.ReplacesZip == oldName, "installed as an update of the old file");
+    Check(plan.Stale.Select(s => s.Path).SequenceEqual(new[] { "ProjectPBZ/Content/Paks/~mods/zzzz_Old_Only_P.pak" }), "the old file's own pak goes: " + string.Join(",", plan.Stale.Select(s => s.Path)));
+    m.Install(plan);
+    Check(m.ListMods(meta).Single().InstalledFile == newName, "the new file is the installed version");
+
+    var again = new Manager(root);
+    Check(ModIdentity.KeyOfZip(newZip) == oldKey && again.LoadRenames().Count == 1, "kept for the next start");
+    new Manager(Path.Combine(root, "elsewhere"));
+    Check(ModIdentity.KeyOfZip(newZip) == newKey, "another game folder has its own links");
+    new Manager(root);
+});
+
+Test("page titles: a trailing version is taken off, and the check reads the title", _ =>
+{
+    Check(NexusApi.TitleAsName("YoRHa 2B Replace Soul_(Outfit Options)_v2.0") == "YoRHa 2B Replace Soul_(Outfit Options)", "trailing _v2.0");
+    Check(NexusApi.TitleAsName("Map Tracker Plus - Minimap and Collectibles (UE4SS)") == "Map Tracker Plus - Minimap and Collectibles (UE4SS)", "a bracket that is no version stays");
+    Check(NexusApi.TitleAsName("UE4SS for Phantom Blade Zero") == "UE4SS for Phantom Blade Zero", "a number inside a word stays");
+    Check(NexusApi.TitleAsName("Cool Mod v1.2.3") == "Cool Mod" && NexusApi.TitleAsName("Cool Mod (1.2)") == "Cool Mod" && NexusApi.TitleAsName("1.2") == "1.2", "other version forms; a title that is only a version stays");
+    const string json = """
+    {"data":{"legacyModsByDomain":{"nodes":[{"modId":187,"name":"Map Tracker Plus &amp; More","version":"1.0.4","status":"published"}]},
+     "m187":[{"fileId":1,"name":"Map Collectible Tracker 1.0.4","version":"1.0.4","category":"MAIN"}]}}
+    """;
+    var parsed = NexusApi.ParseResponse(json, new List<(string, string, string, string)> { ("t", "Map Collectible Tracker", "Map Collectible Tracker 1.0.4 187 1.0.4 2026-11-07T00-32Z s0mFcMSWX.zip", "187") });
+    Check(parsed["t"].PageName == "Map Tracker Plus & More", "the page's title, decoded: " + parsed["t"].PageName);
+});
+
 Test("the same file under another name is not added twice", root =>
 {
     var m = new Manager(root);

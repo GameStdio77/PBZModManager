@@ -57,6 +57,14 @@ public sealed class SharedList
     public List<string> Order { get; set; } = new();
 }
 
+/// <summary>A file's key after its author renamed it, and the key of the mod it was.</summary>
+public sealed class ModRename
+{
+    public string From { get; set; } = "";
+    public string To { get; set; } = "";
+    public DateTime LinkedAt { get; set; }
+}
+
 /// <summary>Writes and reads shared mod lists: as a file, or as text to paste anywhere.</summary>
 public static class ModListShare
 {
@@ -126,6 +134,27 @@ public sealed partial class Manager
 {
     string WantedPath => Path.Combine(StateDir, "wanted.json");
     string SharedOrderPath => Path.Combine(StateDir, "shared-order.json");
+    string RenamesPath => Path.Combine(StateDir, "renames.json");
+
+    /// <summary>Files the author renamed on their page, each joined to the mod it was.</summary>
+    public List<ModRename> LoadRenames() => LoadList<ModRename>(RenamesPath);
+
+    /// <summary>
+    /// Joins a renamed file's key to the mod it was, from now on everywhere keys are made.
+    /// Nothing happens when the key already leads there, or would lead back to itself.
+    /// </summary>
+    public bool LinkRename(string from, string to)
+    {
+        to = ModIdentity.Follow(to);
+        if (from.Equals(to, StringComparison.OrdinalIgnoreCase) || ModIdentity.Follow(from).Equals(to, StringComparison.OrdinalIgnoreCase)) return false;
+        var links = LoadRenames();
+        links.RemoveAll(l => l.From.Equals(from, StringComparison.OrdinalIgnoreCase));
+        links.Add(new ModRename { From = from, To = to, LinkedAt = DateTime.Now });
+        SaveList(RenamesPath, links);
+        ModIdentity.UseRenames(links);
+        Log($"이름 연결 {from} → {to}");
+        return true;
+    }
 
     /// <summary>Mods the user means to get, held in the list by their address.</summary>
     public List<WantedMod> LoadWanted() => LoadList<WantedMod>(WantedPath);

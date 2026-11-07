@@ -234,12 +234,12 @@ public sealed class MainForm : Form, IMessageFilter
         infoEditor.PicturesRequested += async () =>
         {
             await Task.Yield();
-            if (SelectedMod() is { } mod && (ChosenVersion() ?? mod.Latest) is { Missing: false } shown) PictureWindow.Show(this, mod.Name, shown.Path);
+            if (SelectedMod() is { } mod && (ChosenVersion() ?? mod.Latest) is { Missing: false } shown) PictureWindow.Show(this, mod.Shown, shown.Path);
         };
         infoEditor.DocumentsRequested += async () =>
         {
             await Task.Yield();
-            if (SelectedMod() is { } mod && (ChosenVersion() ?? mod.Latest) is { Missing: false } shown) DocumentWindow.Show(this, mod.Name, shown.Path, this.openInBrowser);
+            if (SelectedMod() is { } mod && (ChosenVersion() ?? mod.Latest) is { Missing: false } shown) DocumentWindow.Show(this, mod.Shown, shown.Path, this.openInBrowser);
         };
         infoEditor.CategoryFound += category =>
         {
@@ -344,6 +344,7 @@ public sealed class MainForm : Form, IMessageFilter
             note.Registered = true;
             newFiles.Add(path);
         }
+        JoinRenamedFiles(newFiles);
         // Places held by an address take the files that arrive for them.
         var notices = FillWanted(newFiles);
         SaveMeta();
@@ -380,6 +381,39 @@ public sealed class MainForm : Form, IMessageFilter
         await OfferUpdates(newFiles);
     }
 
+    /// <summary>
+    /// A new file from the page of a mod whose file the author renamed carries on that mod. Under the name the
+    /// last check found, it joins by itself; when the old file was only left among old versions, the user is asked.
+    /// </summary>
+    void JoinRenamedFiles(List<string> paths)
+    {
+        foreach (var path in paths)
+        {
+            var parsed = ModIdentity.ParseFileName(Path.GetFileName(path));
+            if (parsed.PageId.Length == 0) continue;
+            string key;
+            try { key = ModIdentity.KeyOfZip(path); }
+            catch (Exception ex) when (ex is InvalidDataException or IOException or UnauthorizedAccessException) { continue; }
+            if (mods.Any(m => m.Key.Equals(key, StringComparison.OrdinalIgnoreCase))) continue;
+
+            var samePage = mods.Where(m => LinkOf(m)?.ModId == parsed.PageId && remote.ContainsKey(m.Key)).ToList();
+            var renamed = samePage.FirstOrDefault(m => remote[m.Key].RenamedTo.Length > 0
+                && ModIdentity.ParseFileName(remote[m.Key].RenamedTo + ".zip").Name.Equals(parsed.Name, StringComparison.OrdinalIgnoreCase));
+            if (renamed != null)
+            {
+                manager.LinkRename(key, renamed.Key);
+                continue;
+            }
+            foreach (var old in samePage.Where(m => remote[m.Key].Retired))
+            {
+                var message = L.F("Nexus에서 '{0}' 파일은 이전 버전으로만 남아 있습니다.\n새로 넣은 '{1}'을(를) 그 모드의 새 버전으로 이어서 관리할까요?\n\n이어서 관리하면 설치할 때 이전 버전을 업데이트하듯 바꿔 설치합니다. 아니요를 고르면 따로 관리합니다.", old.Name, parsed.Name);
+                if (DarkDialog.Show(this, message, L.T("파일 이름이 바뀐 모드"), yesNo: true) != DialogResult.Yes) continue;
+                manager.LinkRename(key, old.Key);
+                break;
+            }
+        }
+    }
+
     /// <summary>Offers to fill in each new mod's info. Skipping loses nothing: the panel can do it later.</summary>
     async Task AskForInfo(List<string> names)
     {
@@ -413,10 +447,11 @@ public sealed class MainForm : Form, IMessageFilter
             if ((note.Category.Length > 0 && note.InstallNotes.Trim().Length > 0) || NexusApi.LinkFor(note.Url, Array.Empty<string>()) is not { } link) continue;
             var found = await Task.Run(() =>
             {
-                try { return NexusApi.GetPageInfo(link); }
+                try { return NexusApi.GetPage(link); }
                 catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or InvalidOperationException
-                    or System.Text.Json.JsonException or KeyNotFoundException or OverflowException) { return (Category: "", InstallNotes: ""); }
+                    or System.Text.Json.JsonException or KeyNotFoundException or OverflowException) { return (Name: "", Category: "", InstallNotes: ""); }
             });
+            if (found.Name.Length > 0) note.PageName = found.Name;
             if (note.InstallNotes.Trim().Length == 0 && found.InstallNotes.Length > 0) note.InstallNotes = found.InstallNotes;
             if (note.Category.Length == 0 && found.Category.Length > 0)
             {
@@ -438,7 +473,7 @@ public sealed class MainForm : Form, IMessageFilter
 
             var version = ModIdentity.ParseFileName(name).Version;
             var answer = DarkDialog.Show(this,
-                L.F("{0}의 새 버전을 추가했습니다.{1}\n\n지금 업데이트할까요? 나중에 모드 목록에서 해도 됩니다.", group.Name, Change(group.InstalledVersion, version).Replace(" (", "\n").TrimEnd(')')),
+                L.F("{0}의 새 버전을 추가했습니다.{1}\n\n지금 업데이트할까요? 나중에 모드 목록에서 해도 됩니다.", group.Shown, Change(group.InstalledVersion, version).Replace(" (", "\n").TrimEnd(')')),
                 Text, yesNo: true);
             if (answer != DialogResult.Yes) continue;
 
@@ -498,7 +533,7 @@ public sealed class MainForm : Form, IMessageFilter
         var old = OldVersions(mod);
         if (old.Count == 0) return;
         var keep = new[] { mod.Latest.FileName }.Concat(mod.InstalledFile is { } installedFile ? new[] { installedFile } : Array.Empty<string>()).Distinct();
-        var message = L.F("{0}의 이전 버전 {1}개를 휴지통으로 보낼까요?\n", mod.Name, old.Count)
+        var message = L.F("{0}의 이전 버전 {1}개를 휴지통으로 보낼까요?\n", mod.Shown, old.Count)
             + string.Join("\n", old.Select(v => "  " + v.FileName))
             + L.T("\n\n남기는 파일:\n") + string.Join("\n", keep.Select(f => "  " + f));
         if (DarkDialog.Show(this, message, L.T("이전 버전 정리"), yesNo: true) != DialogResult.Yes) return;
@@ -608,12 +643,14 @@ public sealed class MainForm : Form, IMessageFilter
             || NexusApi.LinkFor(MetaOf(mod).Url, Array.Empty<string>()) is not { } link) return;
         var found = await Task.Run(() =>
         {
-            try { return NexusApi.GetPageInfo(link).InstallNotes; }
+            try { return NexusApi.GetPage(link); }
             catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or InvalidOperationException
-                or System.Text.Json.JsonException or KeyNotFoundException or OverflowException) { return ""; }
+                or System.Text.Json.JsonException or KeyNotFoundException or OverflowException) { return (Name: "", Category: "", InstallNotes: ""); }
         });
-        if (found.Length == 0 || IsDisposed) return;
-        NoteOf(fileName).InstallNotes = found;
+        if (IsDisposed) return;
+        if (found.Name.Length > 0) NoteOf(fileName).PageName = found.Name;
+        if (found.InstallNotes.Length == 0) { SaveMeta(); return; }
+        NoteOf(fileName).InstallNotes = found.InstallNotes;
         SaveMeta();
         LoadNote(force: true);
     }
@@ -652,7 +689,7 @@ public sealed class MainForm : Form, IMessageFilter
             shownNoteFor = "page:" + heading.Page;
             infoEditor.SetCategories(categories);
             var shared = MetaOf(files[0]);
-            var name = SharedName(files.Select(f => f.Name).ToList());
+            var name = files.Select(PageTitleOf).FirstOrDefault(n => n.Length > 0) ?? SharedName(files.Select(f => f.Name).ToList());
             infoEditor.Show(name.Length > 0 ? name : files[0].Name,
                 new ModMeta { Category = shared.Category, Url = shared.Url, InstallNotes = NotesOf(files[0], files[0].Latest) }, editable: true);
             infoEditor.SetPageMode(true);
@@ -667,7 +704,9 @@ public sealed class MainForm : Form, IMessageFilter
         var note = mod == null ? new ModMeta() : MetaOf(mod);
         // The tool is the shown version's own, not shared across versions like the rest.
         var view = new ModMeta { Category = note.Category, Url = note.Url, Memo = note.Memo, InstallNotes = mod == null ? "" : NotesOf(mod, shown), Registered = note.Registered, Tool = shown == null ? "" : meta.GetValueOrDefault(shown.FileName)?.Tool ?? "" };
-        infoEditor.Show(mod?.Name ?? L.T("모드를 선택하세요"), view, mod != null, shown?.Tool ?? "");
+        infoEditor.Show(mod == null ? L.T("모드를 선택하세요") : mod.Shown != mod.Name ? L.F("{0} · 파일: {1}", mod.Shown, mod.Name) : mod.Name, view, mod != null, shown?.Tool ?? "");
+        infoEditor.SetDisplayName(mod == null ? null : mod.Versions.Select(v => meta.GetValueOrDefault(v.FileName)?.DisplayName ?? "").FirstOrDefault(n => n.Length > 0) ?? "",
+            mod == null ? "" : PageMates(mod).Count > 0 ? mod.Name : PageTitleOf(mod) is { Length: > 0 } pageTitle ? pageTitle : mod.Name);
         infoEditor.SetPictureCount(shown is { Missing: false } ? Manager.PicturesIn(shown.Path).Count : 0);
         infoEditor.SetDocumentCount(shown is { Missing: false } ? Manager.DocumentsIn(shown.Path).Count : 0);
         infoEditor.SetMyVersion(mod != null && shown != null && NeedsMyVersion(mod, shown), shown == null ? "" : meta.GetValueOrDefault(shown.FileName)?.Version ?? "");
@@ -757,12 +796,19 @@ public sealed class MainForm : Form, IMessageFilter
         // What Nexus said came from the old address; it no longer speaks for this mod.
         if (urlChanged && remote.Remove(mod.Key)) SaveRemoteQuietly();
         var mates = PageMates(mod);
+        var nameChanged = (mod.Versions.Select(v => meta.GetValueOrDefault(v.FileName)?.DisplayName ?? "").FirstOrDefault(n => n.Length > 0) ?? "") != infoEditor.DisplayName;
         foreach (var version in mod.Versions)
         {
             var note = NoteOf(version.FileName);
             note.Category = infoEditor.Category;
             note.Url = infoEditor.Url;
             note.Memo = infoEditor.Memo;
+            note.DisplayName = infoEditor.DisplayName;
+        }
+        if (nameChanged)
+        {
+            RenderZips();
+            RenderInstalled();
         }
         // The page's category and address go to its other files too.
         foreach (var version in mates.SelectMany(m => m.Versions))
@@ -933,6 +979,12 @@ public sealed class MainForm : Form, IMessageFilter
         foreach (var mod in mods.Where(m => !found.ContainsKey(m.Key) && !unreachable.Contains(m.Name))) remote.Remove(mod.Key);
         foreach (var pair in found) remote[pair.Key] = pair.Value;
         SaveRemoteQuietly();
+        // The file under its new name will be the same mod, as long as it is not already listed as another.
+        foreach (var target in targets.Where(t => found.TryGetValue(t.Key, out var i) && i.RenamedTo.Length > 0))
+        {
+            var renamedKey = ModIdentity.PageKey(target.Link.ModId, ModIdentity.ParseFileName(found[target.Key].RenamedTo + ".zip").Name);
+            if (!mods.Any(m => m.Key.Equals(renamedKey, StringComparison.OrdinalIgnoreCase))) manager.LinkRename(renamedKey, target.Key);
+        }
 
         // With the page known, the address field's Open button can take the user straight to the download.
         foreach (var target in targets.Where(t => found.ContainsKey(t.Key)))
@@ -940,6 +992,8 @@ public sealed class MainForm : Form, IMessageFilter
             var mod = mods.First(m => m.Key == target.Key);
             if (MetaOf(mod).Url.Length == 0)
                 foreach (var version in mod.Versions) NoteOf(version.FileName).Url = target.Link.PageUrl;
+            if (found[target.Key].PageName is { Length: > 0 } pageName)
+                foreach (var version in mod.Versions) NoteOf(version.FileName).PageName = pageName;
 
             // A category the user chose stays; only an empty one takes the one from Nexus.
             var nexusCategory = found[target.Key].Category;
@@ -959,22 +1013,27 @@ public sealed class MainForm : Form, IMessageFilter
         var missing = targets.Where(t => !found.ContainsKey(t.Key)).Select(t => t.Name)
             .Concat(onGitHub.Where(g => !found.ContainsKey(g.Key) && !unreachable.Contains(g.Name)).Select(g => g.Name))
             .Concat(unknown).ToList();
-        var pageOnly = mods.Where(m => found.TryGetValue(m.Key, out var i) && !i.MatchedFile).Select(m => m.Name).ToList();
-        var hidden = mods.Where(m => found.TryGetValue(m.Key, out var i) && i.Status.Length > 0 && !i.Status.Equals("published", StringComparison.OrdinalIgnoreCase)).Select(m => m.Name).ToList();
+        var pageOnly = mods.Where(m => found.TryGetValue(m.Key, out var i) && !i.MatchedFile).Select(m => m.Shown).ToList();
+        var hidden = mods.Where(m => found.TryGetValue(m.Key, out var i) && i.Status.Length > 0 && !i.Status.Equals("published", StringComparison.OrdinalIgnoreCase)).Select(m => m.Shown).ToList();
         var compared = found.Keys.Count(k => mods.Any(m => m.Key == k && LocalVersionOf(m).Length > 0));
 
         var lines = new List<string>
         {
             newer.Count > 0
-                ? L.T("새 버전이 있습니다:\n") + string.Join("\n", newer.Select(m => $"  {m.Name}: {LocalVersionOf(m)} → {NewerOnNexus(m)!.Version} ({SourceName(NewerOnNexus(m)!)})"))
+                ? L.T("새 버전이 있습니다:\n") + string.Join("\n", newer.Select(m => $"  {m.Shown}: {LocalVersionOf(m)} → {NewerOnNexus(m)!.Version} ({SourceName(NewerOnNexus(m)!)})"))
                 : L.F("받아 둔 모드 {0}개 모두 최신입니다.", compared),
         };
         var recognised = mods.Where(m => m.Latest.Version.Length == 0 && found.TryGetValue(m.Key, out var i) && i.LocalVersion.Length > 0)
-            .Select(m => $"{m.Name} = {found[m.Key].LocalVersion}").ToList();
+            .Select(m => $"{m.Shown} = {found[m.Key].LocalVersion}").ToList();
         if (recognised.Count > 0) lines.Add(L.F("파일 내용으로 버전을 확인함: {0}", string.Join(", ", recognised)));
+        var renamed = mods.Where(m => found.TryGetValue(m.Key, out var i) && i.RenamedTo.Length > 0).Select(m => $"{m.Shown} → {found[m.Key].RenamedTo}").ToList();
+        if (renamed.Count > 0) lines.Add(L.F("Nexus에서 파일 이름이 바뀌어 새 이름의 파일로 비교: {0}", string.Join(", ", renamed)));
+        var retired = mods.Where(m => found.TryGetValue(m.Key, out var i) && i.Retired).Select(m => m.Shown).ToList();
+        if (retired.Count > 0) lines.Add(L.F("Nexus에서 이전 버전으로만 남은 파일이라 페이지의 최신 파일과 비교 (다운로드 페이지에서 맞는 파일을 골라 주세요): {0}", string.Join(", ", retired)));
+        pageOnly = pageOnly.Except(retired).ToList();
         if (pageOnly.Count > 0) lines.Add(L.F("같은 이름의 파일을 찾지 못해 페이지 버전으로 비교: {0}", string.Join(", ", pageOnly)));
         var noVersion = mods.Where(m => LocalVersionOf(m).Length == 0 && found.ContainsKey(m.Key))
-            .Select(m => $"{m.Name} ({SourceName(found[m.Key])}: {found[m.Key].Version})").ToList();
+            .Select(m => $"{m.Shown} ({SourceName(found[m.Key])}: {found[m.Key].Version})").ToList();
         if (noVersion.Count > 0) lines.Add(L.F("파일 이름에 버전이 없어 비교하지 못함: {0}", string.Join(", ", noVersion)));
         if (hidden.Count > 0) lines.Add(L.F("페이지가 공개 상태가 아님: {0}", string.Join(", ", hidden)));
         if (unreachable.Count > 0) lines.Add(L.F("GitHub에 연결하지 못함 (잠시 후 다시 시도해 주세요): {0}", string.Join(", ", unreachable)));
@@ -1152,7 +1211,7 @@ public sealed class MainForm : Form, IMessageFilter
         if (moves.Count == 0) return;
 
         var question = L.F("앞으로 모드를 {0}에 맞춰 설치합니다.\n이미 설치된 다음 모드도 지금 다시 배치할까요?\n", RuntimeName(target))
-            + string.Join("\n", moves.Select(m => "  " + m.Mod.Name))
+            + string.Join("\n", moves.Select(m => "  " + ShownName(m.Mod)))
             + L.T("\n\n고른 옵션과 뺀 파일은 그대로 씁니다.");
         if (DarkDialog.Show(this, question, L.T("스크립트 로더"), yesNo: true) != DialogResult.Yes) return;
 
@@ -1163,12 +1222,12 @@ public sealed class MainForm : Form, IMessageFilter
             {
                 try
                 {
-                    report(L.F("{0} 다시 배치 중...", mod.Name));
+                    report(L.F("{0} 다시 배치 중...", ShownName(mod)));
                     manager.Install(plan);
                 }
                 catch (Exception ex) when (ex is InvalidOperationException or IOException or UnauthorizedAccessException)
                 {
-                    errors.Add($"{mod.Name}: {ex.Message}");
+                    errors.Add($"{ShownName(mod)}: {ex.Message}");
                 }
             }
             return errors;
@@ -1223,7 +1282,7 @@ public sealed class MainForm : Form, IMessageFilter
             if (change.Item1 is { } why && installed.FirstOrDefault(i => i.Key.Equals(mod.Key, StringComparison.OrdinalIgnoreCase)) is { } current)
             {
                 var answer = DarkDialog.Show(this,
-                    L.F("{0}의 이 버전은 이전 버전과 구조가 달라졌습니다.\n{1}\n\n이전 버전을 먼저 제거한 뒤 새로 설치하는 것을 권합니다. 지금 제거하고 설치할까요?\n(아니요: 이전 버전 위에 그대로 업데이트)", mod.Name, why),
+                    L.F("{0}의 이 버전은 이전 버전과 구조가 달라졌습니다.\n{1}\n\n이전 버전을 먼저 제거한 뒤 새로 설치하는 것을 권합니다. 지금 제거하고 설치할까요?\n(아니요: 이전 버전 위에 그대로 업데이트)", mod.Shown, why),
                     L.T("구조가 바뀐 버전"), yesNo: true);
                 if (answer == DialogResult.Yes)
                 {
@@ -1248,7 +1307,7 @@ public sealed class MainForm : Form, IMessageFilter
         List<string>? chosen = null;
         if (groups.Count > 0)
         {
-            using var options = new OptionsDialog(mod.Name, groups, manager.PreviousOptions(version.Path));
+            using var options = new OptionsDialog(mod.Shown, groups, manager.PreviousOptions(version.Path));
             if (options.ShowDialog(this) != DialogResult.OK) return;
             chosen = options.Chosen;
         }
@@ -1281,7 +1340,7 @@ public sealed class MainForm : Form, IMessageFilter
             + (plan.Stale.Count > 0 ? L.F("옛 파일 제거 {0}개 · ", plan.Stale.Count) : "")
             + L.F("기존 파일 유지 {0}개 · 동일 {1}개 · 새 폴더 {2}개", plan.Count(ChangeKind.Keep), plan.Count(ChangeKind.Same), plan.NewDirs.Count);
         if (plan.ReplacesZip != null)
-            summary = $"{mod.Name}{Change(ModIdentity.ParseFileName(plan.ReplacesZip).Version, version.Version)}\n{summary}";
+            summary = $"{mod.Shown}{Change(ModIdentity.ParseFileName(plan.ReplacesZip).Version, version.Version)}\n{summary}";
         if (plan.Options.Count > 0)
             summary += L.T("\n선택한 옵션: ") + string.Join(", ", plan.Options.SelectMany(g => g.Options).Where(o => plan.Chosen.Contains(o.Folder)).Select(o => o.Label));
 
@@ -1300,7 +1359,7 @@ public sealed class MainForm : Form, IMessageFilter
             warnings.Add(L.F("매니저로 설치하지 않은 파일 {0}개를 덮어씁니다. 게임 파일이거나 다른 도구의 파일일 수 있습니다. 원본은 백업됩니다.", fromOutside));
 
         List<string> unticked;
-        using (var dialog = new PlanDialog(L.F("{0} 확인 - {1}", action, mod.Name), summary, warnings, rows, action))
+        using (var dialog = new PlanDialog(L.F("{0} 확인 - {1}", action, mod.Shown), summary, warnings, rows, action))
         {
             if (dialog.ShowDialog(this) != DialogResult.OK) return;
             unticked = dialog.Unticked.ToList();
@@ -1322,7 +1381,7 @@ public sealed class MainForm : Form, IMessageFilter
         var ready = plan;
         var tx = await Run(L.F("{0} 중...", action), p => manager.Install(ready, p));
         await RefreshAll();
-        if (tx != null) SetStatus(L.F("{0}{1} {2} 완료", mod.Name, Paren(version.Version), action) + (ready.Excluded.Count > 0 ? L.F(" (뺀 파일 {0}개)", ready.Excluded.Count) : ""));
+        if (tx != null) SetStatus(L.F("{0}{1} {2} 완료", mod.Shown, Paren(version.Version), action) + (ready.Excluded.Count > 0 ? L.F(" (뺀 파일 {0}개)", ready.Excluded.Count) : ""));
         // The page now describes the version just put in: its install steps are fetched again for it.
         if (tx != null && action == L.T("업데이트")) await RefreshNotesFor(mod.Key, version.FileName);
         await FollowLoaderChange();
@@ -1384,7 +1443,7 @@ public sealed class MainForm : Form, IMessageFilter
         var plan = await Run(L.T("제거 확인 중..."), _ => manager.BuildRemovePlan(ids));
         if (plan == null) return;
 
-        var names = string.Join(", ", chosen.Select(m => m.Name));
+        var names = string.Join(", ", chosen.Select(ShownName));
         var headline = chosen.Count == 1
             ? L.F("{0} 모드를 제거합니다. 다른 모드는 그대로 두고, 모드 목록에는 남습니다.", names)
             : L.F("모드 {0}개를 제거합니다: {1}\n다른 모드는 그대로 두고, 모드 목록에는 남습니다.", chosen.Count, names);
@@ -1415,7 +1474,7 @@ public sealed class MainForm : Form, IMessageFilter
             DarkDialog.Show(this, L.T("고른 모드는 모두 이미 그 버전으로 설치되어 있습니다."), Text);
             return;
         }
-        var list = string.Join("\n", work.Select(x => $"  {x.Mod.Name}: {InstallAction(x.Mod, x.Version)}{Change(x.Mod.InstalledVersion, x.Version.Version)}"));
+        var list = string.Join("\n", work.Select(x => $"  {x.Mod.Shown}: {InstallAction(x.Mod, x.Version)}{Change(x.Mod.InstalledVersion, x.Version.Version)}"));
         if (DarkDialog.Show(this, L.F("모드 {0}개를 설치할까요?\n{1}\n\n파일 하나하나 고르려면 모드를 하나만 골라 설치하세요.", work.Count, list), L.T("여러 모드 설치"), yesNo: true) != DialogResult.Yes) return;
 
         var errors = new List<string>();
@@ -1423,14 +1482,14 @@ public sealed class MainForm : Form, IMessageFilter
         {
             List<string>? options = null;
             var groups = await Run(L.T("압축 파일 확인 중..."), _ => manager.OptionGroups(version.Path));
-            if (groups == null) { errors.Add(L.F("{0}: 압축 파일을 읽지 못했습니다.", mod.Name)); continue; }
+            if (groups == null) { errors.Add(L.F("{0}: 압축 파일을 읽지 못했습니다.", mod.Shown)); continue; }
             if (groups.Count > 0 && manager.PreviousOptions(version.Path).Count == 0)
             {
-                using var dialog = new OptionsDialog(mod.Name, groups, Array.Empty<string>());
-                if (dialog.ShowDialog(this) != DialogResult.OK) { errors.Add(L.F("{0}: 옵션을 고르지 않아 건너뜀", mod.Name)); continue; }
+                using var dialog = new OptionsDialog(mod.Shown, groups, Array.Empty<string>());
+                if (dialog.ShowDialog(this) != DialogResult.OK) { errors.Add(L.F("{0}: 옵션을 고르지 않아 건너뜀", mod.Shown)); continue; }
                 options = dialog.Chosen;
             }
-            var done = await Run(L.F("{0} 설치 중...", mod.Name), p =>
+            var done = await Run(L.F("{0} 설치 중...", mod.Shown), p =>
             {
                 try
                 {
@@ -1443,7 +1502,7 @@ public sealed class MainForm : Form, IMessageFilter
                     return ex.Message;
                 }
             });
-            if (done is { Length: > 0 }) errors.Add($"{mod.Name}: {done}");
+            if (done is { Length: > 0 }) errors.Add($"{mod.Shown}: {done}");
         }
         await RefreshAll();
         if (errors.Count > 0) DarkDialog.Show(this, L.T("설치하지 못한 모드:\n") + string.Join("\n", errors), L.T("여러 모드 설치"), isError: true);
@@ -1602,22 +1661,7 @@ public sealed class MainForm : Form, IMessageFilter
         RenderFilter();
         RenderZips();
 
-        // Mods are numbered; separators are headings between them.
-        var selectedKey = selectAfterSeparator ?? SelectedRow()?.Key;
-        selectAfterSeparator = null;
-        int number = 0;
-        installedList.SetRows(installedRows.Select(row => row.Mod is not { } mod
-            ? new ListRow(new[] { "", $"── {row.Text} ──", "", "", "" }, row, Theme.Info)
-            : new ListRow(new[]
-            {
-                (++number).ToString(),
-                mod.Installs[^1].State != Tx.Installed ? L.F("{0} (중단됨)", mod.Name) : mod.Name,
-                InstalledVersionText(mod),
-                GroupOf(mod) is { } group ? MetaOf(group).Memo : "",
-                mod.Installs[^1].Time.ToString("yyyy-MM-dd HH:mm"),
-            }, row, mod.Installs[^1].State != Tx.Installed ? Theme.Danger : null)).ToList());
-        installedList.KeepSelection(i => ((InstalledRow)i.Tag!).Key == selectedKey);
-        if (installedList.Items.Count == 0) fileList.SetRows(Array.Empty<ListRow>());
+        RenderInstalled();
         await ShowFilesOfSelected();
         UpdateButtons();
     }
@@ -1637,6 +1681,7 @@ public sealed class MainForm : Form, IMessageFilter
 
     void RenderZips()
     {
+        foreach (var mod in mods) mod.Title = TitleOf(mod);
         var selectedKey = selectRowAfterRefresh
             ?? (selectAfterRefresh != null
                 ? mods.FirstOrDefault(m => m.Versions.Any(v => v.Path == selectAfterRefresh))?.Key
@@ -1655,7 +1700,7 @@ public sealed class MainForm : Form, IMessageFilter
         // listed under it side by side, none made to look like another's part. Places held by an address join
         // their page like files.
         var groups = mods
-            .Select(m => new ListEntry(m, null, m.Name, CategoryLabel(MetaOf(m)), LinkOf(m) is { } link ? $"{link.Game}/{link.ModId}" : "key:" + m.Key))
+            .Select(m => new ListEntry(m, null, m.Shown, CategoryLabel(MetaOf(m)), LinkOf(m) is { } link ? $"{link.Game}/{link.ModId}" : "key:" + m.Key))
             .Concat(wanted.Select(w => new ListEntry(null, w, w.Name, w.Category.Length > 0 ? w.Category : Manager.NoCategory, w.Page)))
             .Where(x => filter == Manager.AllCategories || x.Category.Equals(filter, StringComparison.OrdinalIgnoreCase))
             .GroupBy(x => x.Page, StringComparer.OrdinalIgnoreCase)
@@ -1671,7 +1716,8 @@ public sealed class MainForm : Form, IMessageFilter
             string NameOf(ListEntry x, int index) => g.Count == 1 ? x.Name
                 : tree ? (index == 0 ? x.Name : "   └ " + x.Name)
                 : "      " + NameUnderHeading(x.Name, names);
-            return (g.Count > 1 && !tree ? new[] { PageHeadingRow(names, g[0].Page, g[0].Category) } : Array.Empty<ListRow>())
+            var pageTitle = g.Select(x => x.Mod).OfType<ModGroup>().Select(PageTitleOf).FirstOrDefault(n => n.Length > 0) ?? "";
+            return (g.Count > 1 && !tree ? new[] { PageHeadingRow(names, g[0].Page, g[0].Category, pageTitle) } : Array.Empty<ListRow>())
                 .Concat(g.Select((x, index) => x.Place is { } place ? PlaceRow(place, NameOf(x, index), x.Category) : ModRow(x.Mod!, NameOf(x, index), x.Category)));
         }).ToList();
 
@@ -1679,6 +1725,27 @@ public sealed class MainForm : Form, IMessageFilter
         zipList.KeepSelection(i => RowKey(i.Tag) == selectedKey);
         LoadNote();
         UpdateButtons();
+    }
+
+    /// <summary>Draws the installed list from the rows last read.</summary>
+    void RenderInstalled()
+    {
+        // Mods are numbered; separators are headings between them.
+        var selectedKey = selectAfterSeparator ?? SelectedRow()?.Key;
+        selectAfterSeparator = null;
+        int number = 0;
+        installedList.SetRows(installedRows.Select(row => row.Mod is not { } mod
+            ? new ListRow(new[] { "", $"── {row.Text} ──", "", "", "" }, row, Theme.Info)
+            : new ListRow(new[]
+            {
+                (++number).ToString(),
+                mod.Installs[^1].State != Tx.Installed ? L.F("{0} (중단됨)", ShownName(mod)) : ShownName(mod),
+                InstalledVersionText(mod),
+                GroupOf(mod) is { } group ? MetaOf(group).Memo : "",
+                mod.Installs[^1].Time.ToString("yyyy-MM-dd HH:mm"),
+            }, row, mod.Installs[^1].State != Tx.Installed ? Theme.Danger : null)).ToList());
+        installedList.KeepSelection(i => ((InstalledRow)i.Tag!).Key == selectedKey);
+        if (installedList.Items.Count == 0) fileList.SetRows(Array.Empty<ListRow>());
     }
 
     ListRow ModRow(ModGroup mod, string name, string category)
@@ -1705,6 +1772,30 @@ public sealed class MainForm : Form, IMessageFilter
     }
 
     ModGroup? GroupOf(InstalledMod mod) => mods.FirstOrDefault(m => m.Key.Equals(mod.Key, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>An installed mod by the name the mod list gives it.</summary>
+    string ShownName(InstalledMod mod) => GroupOf(mod)?.Shown ?? mod.Name;
+
+    /// <summary>
+    /// The name a mod goes by in the window: the one the user gave it, else its page's title when it is the only
+    /// mod from that page. Files of one page keep their own names, under a heading with the page's title.
+    /// Empty leaves the file's name.
+    /// </summary>
+    string TitleOf(ModGroup mod)
+    {
+        var own = mod.Versions.Select(v => meta.GetValueOrDefault(v.FileName)?.DisplayName ?? "").FirstOrDefault(n => n.Length > 0);
+        if (own != null) return own;
+        return PageMates(mod).Count > 0 ? "" : PageTitleOf(mod);
+    }
+
+    /// <summary>The title of the page a mod comes from, as last read; empty when not known.</summary>
+    string PageTitleOf(ModGroup mod)
+    {
+        var name = mod.Versions.Concat(PageMates(mod).SelectMany(m => m.Versions))
+            .Select(v => meta.GetValueOrDefault(v.FileName)?.PageName ?? "").FirstOrDefault(n => n.Length > 0)
+            ?? (remote.TryGetValue(mod.Key, out var info) ? info.PageName : "");
+        return name.Length > 0 ? NexusApi.TitleAsName(name) : "";
+    }
 
     /// <summary>The installed version: from the file name, or as GitHub told it by the file's checksum, in brackets.</summary>
     string InstalledVersionText(InstalledMod mod)
@@ -1769,10 +1860,10 @@ public sealed class MainForm : Form, IMessageFilter
         return shared.Length > 0 && name.Length > shared.Length ? name[shared.Length..].Trim() : name;
     }
 
-    /// <summary>The line above a page's files: their shared name, and where they come from.</summary>
-    ListRow PageHeadingRow(IReadOnlyList<string> names, string page, string category)
+    /// <summary>The line above a page's files: the page's title or else their shared name, and how many there are.</summary>
+    ListRow PageHeadingRow(IReadOnlyList<string> names, string page, string category, string pageTitle)
     {
-        var shared = SharedName(names);
+        var shared = pageTitle.Length > 0 ? pageTitle : SharedName(names);
         var from = L.F("파일 {0}개", names.Count);
         return new ListRow(new[] { shared.Length > 0 ? shared : from, "", category, "", shared.Length > 0 ? from : "" }, new PageHeading(page), Theme.Info);
     }

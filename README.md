@@ -24,7 +24,8 @@ Phantom Blade Zero(팬텀 블레이드 제로)용 모드 매니저입니다. 받
   - "(choose one)"처럼 같은 파일을 쓰는 옵션 폴더는 묶음마다 하나씩 골라 설치
 - **Nexus 정보 자동 입력**: 모드 주소를 넣으면 Nexus 공개 API로 카테고리와 설명의 설치 방법을 가져옵니다.
 - **최신 버전 확인**: Nexus Mods와 GitHub 릴리스에서 새 버전이 있는지 확인하고, 다운로드 페이지를 열어 줍니다.
-- **버전 관리**: 같은 모드의 여러 버전을 한 모드로 묶어 업데이트·다운그레이드하고, 이전 버전 파일을 정리(휴지통으로)할 수 있습니다.
+- **버전 관리**: 같은 모드의 여러 버전을 한 모드로 묶어 업데이트·다운그레이드하고, 이전 버전 파일을 정리(휴지통으로)할 수 있습니다. 제작자가 Nexus에서 파일 이름을 바꿔도 같은 모드의 새 버전으로 이어집니다.
+- **모드 이름**: 파일 이름 대신 Nexus 페이지 제목으로 보여 줍니다. 한 페이지에서 받은 파일이 여럿이면 페이지 제목 아래에 파일 이름으로 나뉩니다. 모드 정보의 [표시 이름]에 직접 적은 이름이 가장 먼저 쓰입니다.
 - **정리 도구**: 설치된 모드 순서 바꾸기와 이름 붙인 구분선, 한 줄 메모, 여러 모드 한 번에 설치·제거
 - **미리보기 이미지**: 압축 안에 그림이 있으면 모드 정보의 [이미지 보기]로 좌우로 넘겨 볼 수 있습니다.
 - **설명서 보기**: 압축 안의 readme·설명서(txt, md, rtf, html)를 모드 정보의 [설명서 보기]로 바로 읽습니다. PDF는 PDF 프로그램으로 엽니다. 설명서는 게임 폴더에 깔리지 않도록 설치에서 뺍니다(모드 폴더 안의 파일과 게임 폴더 구조로 들어 있는 파일은 그대로 설치).
@@ -58,6 +59,7 @@ Phantom Blade Zero(팬텀 블레이드 제로)용 모드 매니저입니다. 받
 | `leftovers/` | 제거할 때 지우지 않고 옮겨 둔 파일. [보관 폴더 비우기]로 휴지통에 보낼 수 있습니다. |
 | `meta.json` | 모드별 카테고리·주소·메모·실행 도구·설치 방법 |
 | `wanted.json`, `shared-order.json` | 주소로 잡아 둔 자리, 공유받은 목록의 설치 순서 |
+| `renames.json` | Nexus에서 이름이 바뀐 파일과 원래 모드의 연결 |
 | `settings.json` | 게임 폴더, 언어, 창 위치 |
 | `order.json`, `categories.json`, `remote.json`, `log.txt` | 목록 순서·구분선, 카테고리, 최신 버전 확인 결과, 작업 기록 |
 
@@ -93,7 +95,8 @@ A mod manager for Phantom Blade Zero. It installs downloaded mod archives where 
   - "(choose one)" option folders that share files: one per group
 - **Nexus info filled in**: enter a mod's address and its category and install steps are fetched with the public Nexus API.
 - **Update check**: checks Nexus Mods and GitHub releases for newer versions and opens the download page.
-- **Versions**: several versions of a mod are one mod to update or downgrade; old version files can be cleaned up (to the Recycle Bin).
+- **Versions**: several versions of a mod are one mod to update or downgrade; old version files can be cleaned up (to the Recycle Bin). A file the author renamed on Nexus carries on as the next version of the same mod.
+- **Mod names**: mods go by their Nexus page title rather than the file name. Several files from one page sit under the page title by their file names. A name typed in [Display name] in the mod info comes first.
 - **Organizing**: reorder installed mods, named separators, one-line memos, install or remove several mods at once
 - **Preview pictures**: when an archive holds pictures, [Pictures] in the mod info pages through them.
 - **Readmes**: [Readme] in the mod info shows the archive's readmes and manuals (txt, md, rtf, html) right there; a PDF opens in your PDF viewer. Readmes are left out of the install so they don't litter the game folder (files inside a mod's own folder, or laid out like the game folder, still install).
@@ -127,6 +130,7 @@ Installing and removing are blocked while the game runs. The language is picked 
 | `leftovers/` | Files moved aside instead of deleted on removal. [Empty kept files] sends them to the Recycle Bin. |
 | `meta.json` | Each mod's category, address, memo, tool, install steps |
 | `wanted.json`, `shared-order.json` | Places held by address, and the order of an imported list |
+| `renames.json` | Files renamed on Nexus, joined to the mod they were |
 | `settings.json` | Game folder, language, window place |
 | `order.json`, `categories.json`, `remote.json`, `log.txt` | List order and separators, categories, update check results, work log |
 
@@ -162,7 +166,8 @@ Phantom Blade Zero（影之刃零）的模组管理器。它会把下载的模�
   - 像“(choose one)”这样共用文件的选项文件夹，每组选一个安装
 - **自动填写 Nexus 信息**：填写模组地址后，会通过 Nexus 公开 API 获取分类和说明中的安装方法。
 - **检查最新版本**：在 Nexus Mods 和 GitHub Releases 上检查是否有新版本，并打开下载页面。
-- **版本管理**：同一模组的多个版本作为一个模组来更新或降级，旧版本文件可以清理（移到回收站）。
+- **版本管理**：同一模组的多个版本作为一个模组来更新或降级，旧版本文件可以清理（移到回收站）。作者在 Nexus 上改了文件名时，也会作为同一模组的新版本继续管理。
+- **模组名称**：以 Nexus 页面标题而不是文件名显示。同一页面下载的多个文件会在页面标题下按文件名分开。在模组信息的 [显示名称] 中填写的名称优先使用。
 - **整理工具**：调整已安装模组的顺序、带名称的分隔线、一行备注、一次安装或移除多个模组
 - **预览图片**：压缩包中有图片时，可在模组信息中点击 [查看图片] 左右翻看。
 - **查看说明**：在模组信息中点击 [查看说明] 可直接阅读压缩包内的 readme 和说明文件（txt、md、rtf、html），PDF 用 PDF 程序打开。说明文件不会安装到游戏文件夹（模组自身文件夹内或按游戏文件夹结构放置的文件仍会安装）。
@@ -196,6 +201,7 @@ Phantom Blade Zero（影之刃零）的模组管理器。它会把下载的模�
 | `leftovers/` | 移除时没有删除而移到这里的文件。可用 [清空保留文件夹] 移到回收站。 |
 | `meta.json` | 每个模组的分类、地址、备注、运行工具、安装方法 |
 | `wanted.json`、`shared-order.json` | 按地址预留的位置，导入列表的安装顺序 |
+| `renames.json` | 在 Nexus 上改名的文件与原模组的对应关系 |
 | `settings.json` | 游戏文件夹、语言、窗口位置 |
 | `order.json`、`categories.json`、`remote.json`、`log.txt` | 列表顺序与分隔线、分类、最新版本检查结果、操作日志 |
 
@@ -231,7 +237,8 @@ Phantom Blade Zero 用の Mod マネージャーです。ダウンロードし�
   - 「(choose one)」のように同じファイルを使うオプションフォルダーは、グループごとに 1 つ選んでインストール
 - **Nexus の情報を自動入力**：Mod のアドレスを入れると、Nexus の公開 API でカテゴリーと説明文のインストール方法を取得します。
 - **最新バージョン確認**：Nexus Mods と GitHub のリリースで新しいバージョンがあるか確認し、ダウンロードページを開きます。
-- **バージョン管理**：同じ Mod の複数バージョンを 1 つの Mod として更新・ダウングレードし、旧バージョンのファイルを整理（ごみ箱へ）できます。
+- **バージョン管理**：同じ Mod の複数バージョンを 1 つの Mod として更新・ダウングレードし、旧バージョンのファイルを整理（ごみ箱へ）できます。作者が Nexus でファイル名を変えても、同じ Mod の新バージョンとして引き継ぎます。
+- **Mod 名**：ファイル名ではなく Nexus のページタイトルで表示します。同じページから入手したファイルが複数あれば、ページタイトルの下にファイル名で分かれます。Mod 情報の [表示名] に入力した名前が最優先です。
 - **整理ツール**：インストール済み Mod の並べ替え、名前付きの区切り線、1 行メモ、複数の Mod の一括インストール・削除
 - **プレビュー画像**：圧縮ファイルに画像があれば、Mod 情報の [画像を見る] で左右にめくって見られます。
 - **説明書を見る**：圧縮ファイル内の readme・説明書（txt、md、rtf、html）を Mod 情報の [説明書を見る] でその場で読めます。PDF は PDF アプリで開きます。説明書はゲームフォルダーに置かれないようインストールから除外します（Mod 自身のフォルダー内や、ゲームフォルダーの構成どおりに入っているファイルはそのままインストール）。
@@ -265,6 +272,7 @@ Phantom Blade Zero 用の Mod マネージャーです。ダウンロードし�
 | `leftovers/` | 削除時に消さずに移したファイル。[保管フォルダーを空にする] でごみ箱に送れます。 |
 | `meta.json` | Mod ごとのカテゴリー・アドレス・メモ・実行ツール・インストール方法 |
 | `wanted.json`、`shared-order.json` | アドレスで確保した場所、取り込んだ一覧のインストール順 |
+| `renames.json` | Nexus で名前が変わったファイルと元の Mod の対応 |
 | `settings.json` | ゲームフォルダー、言語、ウィンドウ位置 |
 | `order.json`、`categories.json`、`remote.json`、`log.txt` | 一覧の順番と区切り線、カテゴリー、最新バージョン確認の結果、作業記録 |
 

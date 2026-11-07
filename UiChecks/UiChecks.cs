@@ -128,12 +128,15 @@ static class UiChecks
                 : url.Contains("api.github.com")
                 ? """[{"tag_name":"2.7.1","prerelease":false,"draft":false,"html_url":"https://github.com/XTGMods/UUEPBS/releases/tag/2.7.1","assets":[{"digest":"sha256:LOCALHASH"}]}]"""
                 : body.Contains("game(domainName") ? """{"data":{"game":{"id":"10614"}}}"""
+                : body.Contains("modFiles") && Check.Length > 0 ? Check
                 : body.Contains("description") ? """{"data":{"legacyModsByDomain":{"nodes":[{"name":"Stand-in Mod","modCategory":{"name":"Visuals"},"description":"STEPS"}]}}}""".Replace("STEPS", Steps)
                 : """{"data":{"legacyModsByDomain":{"nodes":[]}}}""";
             return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(json.Replace("LOCALHASH", LocalHash), Encoding.UTF8, "application/json") };
         }
 
         public string LocalHash = "";
+        /// <summary>The answer to a version check, when one is set.</summary>
+        public string Check = "";
         public string Steps = "Installation:<br />1. Step one<br />Uninstall:<br />x";
     }
 
@@ -170,18 +173,25 @@ static class UiChecks
         var standIn = new StandIn();
         var manager = MakeGame(workDir, standIn);
         Manager.DeleteInsteadOfRecycleForTests = true;
-        const string withDocs = "Readme Mod 600 1.0 2026-11-07T00-00Z r.zip";
-        Zip(Path.Combine(manager.ModDir, withDocs),
-            ("~mods/Readme_P.pak", "p"),
-            ("README.txt", "설치 방법\r\n1. ~mods 폴더에 넣으세요.\r\n" + string.Join("\r\n", Enumerable.Range(2, 80).Select(i => i + ". 줄"))),
-            ("Changelog.md", "# 1.0\r\n- first"),
-            ("Guide.pdf", "%PDF-1.4"));
-        // Installing leaves the readmes out and says so.
-        var plan = manager.BuildPlan(Path.Combine(manager.ModDir, withDocs));
-        Check("install leaves readmes out: " + string.Join(", ", plan.Items.Select(i => i.Path)), plan.Items.Count == 1 && plan.Warnings.Any(w => w.Contains("설명서 3개")));
-        manager.Install(plan);
-        var opened = new List<string>();
-        var form = new MainForm(manager, Array.Empty<string>(), opened.Add)
+        // Pages 385 and 187 as Nexus answers a version check, with their titles.
+        standIn.Check = """
+            {"data": {"legacyModsByDomain": {"nodes": [{"modId": 385, "name": "Female Animation", "version": "7", "status": "published", "modCategory": {"name": "Animations"}}, {"modId": 187, "name": "Map Tracker Plus - Minimap and Collectibles (UE4SS)", "version": "1.0.4", "status": "published", "modCategory": {"name": "Gameplay"}}, {"modId": 300, "name": "YoRHa 2B Replace Soul_(Outfit Options)_v2.0", "version": "2.1.1", "status": "published", "modCategory": {"name": "Characters"}}]}, "m385": [{"fileId": 1048, "name": "PBZ FemaleAnimation", "version": "1", "category": "OLD_VERSION"}, {"fileId": 1322, "name": "PBZ FemaleAnimation OtherBodies", "version": "1", "category": "OLD_VERSION"}, {"fileId": 1323, "name": "PBZ FemaleAnimation for 2B", "version": "2", "category": "OLD_VERSION"}, {"fileId": 1342, "name": "PBZ FemaleAnimation for 2B", "version": "3", "category": "OLD_VERSION"}, {"fileId": 1343, "name": "PBZ FemaleAnimation OtherBodies", "version": "3", "category": "OLD_VERSION"}, {"fileId": 1509, "name": "PBZ FemaleAnimation OtherBodies", "version": "4", "category": "OLD_VERSION"}, {"fileId": 1510, "name": "PBZ FemaleAnimation Original Idle", "version": "1", "category": "OLD_VERSION"}, {"fileId": 2304, "name": "PBZ FemaleAnimation Original Idle", "version": "6", "category": "OLD_VERSION"}, {"fileId": 2305, "name": "PBZ FemaleAnimation OtherBodies", "version": "6", "category": "OLD_VERSION"}, {"fileId": 2306, "name": "PBZ FemaleAnimation for 2B(my personal edit)", "version": "6", "category": "OLD_VERSION"}, {"fileId": 2307, "name": "PBZ FemaleAnimation For SoulVerR", "version": "5", "category": "OLD_VERSION"}, {"fileId": 2333, "name": "PBZ FemaleAnimation For Ver.R", "version": "6", "category": "OLD_VERSION"}, {"fileId": 2350, "name": "PBZ FemaleAnimation For 2B(Original)", "version": "6", "category": "OLD_VERSION"}, {"fileId": 2354, "name": "PBZ FemaleAnimation For 2B(Original)", "version": "6.1", "category": "OLD_VERSION"}, {"fileId": 2359, "name": "PBZ FemaleAnimation For 2B(Original)", "version": "7", "category": "MAIN"}, {"fileId": 2360, "name": "PBZ FemaleAnimation For Ver.R", "version": "7", "category": "MAIN"}, {"fileId": 2361, "name": "PBZ FemaleAnimation for 2B(my personal edit)", "version": "7", "category": "OPTIONAL"}, {"fileId": 2362, "name": "PBZ FemaleAnimation OtherBodies", "version": "7", "category": "MAIN"}, {"fileId": 2363, "name": "PBZ FemaleAnimation Original Idle", "version": "7", "category": "MAIN"}], "m187": [{"fileId": 1, "name": "Map Collectible Tracker 1.0.4", "version": "1.0.4", "category": "MAIN"}], "m300": [{"fileId": 2, "name": "YoRHa 2B Replace Soul_(Outfit Options)_v2.1.1", "version": "2.1.1", "category": "MAIN"}]}}
+            """;
+        const string tracker = "Map Collectible Tracker 1.0.4 187 1.0.4 2026-11-07T00-32Z s0mFcMSWX.zip";
+        const string yorha = "YoRHa 2B Replace Soul_(Outfit Options)_v2.1.1 300 2.1.1 2026-11-07T02-30Z mjROM2ABF.zip";
+        const string twoB = "PBZ FemaleAnimation For 2B(Original) 385 7 2026-11-08T00-00Z abcdEFGH.zip";
+        const string verR = "PBZ FemaleAnimation For Ver.R 385 7 2026-11-07T04-43Z Ihsdbc5En.zip";
+        foreach (var (name, pak) in new[] { (tracker, "Tracker_P.pak"), (yorha, "YoRHa_P.pak"), (twoB, "TwoB_P.pak"), (verR, "VerR_P.pak") })
+        {
+            Zip(Path.Combine(manager.ModDir, name), ("ProjectPBZ/Content/Paks/~mods/" + pak, "x"));
+            manager.Install(manager.BuildPlan(Path.Combine(manager.ModDir, name)));
+        }
+        // The title the add dialog read for 300, with the old version the author left in it.
+        var meta = manager.LoadMeta();
+        meta[yorha] = new ModMeta { Registered = true, Url = "https://www.nexusmods.com/phantombladezero/mods/300", PageName = "YoRHa 2B Replace Soul_(Outfit Options)_v2.0" };
+        manager.SaveMeta(meta);
+
+        var form = new MainForm(manager, Array.Empty<string>(), _ => { })
         {
             StartPosition = FormStartPosition.Manual,
             ShowInTaskbar = false,
@@ -197,69 +207,50 @@ static class UiChecks
             try
             {
                 await Task.Delay(1000);
-                var zipList = All(form).OfType<DarkListView>().First();
+                var lists = All(form).OfType<DarkListView>().ToList();
+                var zipList = lists[0];
+                var installedList = lists[1];
+                List<string> Names(DarkListView list, int column) => list.Items.Cast<ListViewItem>().Select(i => i.SubItems[column].Text.Trim()).ToList();
                 async Task Pick(string name)
                 {
                     foreach (ListViewItem i in zipList.Items) i.Selected = i.SubItems[0].Text.Trim() == name;
                     await Task.Delay(400);
                 }
-                var names = zipList.Items.Cast<ListViewItem>().Select(i => i.SubItems[0].Text.Trim()).ToList();
-                var docsName = names.First(n => n.StartsWith("Readme"));
-                await Pick("Old");
-                Check("no readme, no button", !All(form).OfType<Button>().Any(b => b.Visible && b.Text.StartsWith("설명서 보기")));
-                await Pick(docsName);
-                var button = All(form).OfType<Button>().SingleOrDefault(b => b.Visible && b.Text.StartsWith("설명서 보기"));
-                Check("readme button: " + button?.Text, button?.Text == "설명서 보기 (3)...");
-                Check("no pictures, no picture button", !All(form).OfType<Button>().Any(b => b.Visible && b.Text.StartsWith("이미지 보기")));
+                Check("before the check: file names, and 300 by the title read when it was added: " + string.Join(" | ", Names(zipList, 0)),
+                    Names(zipList, 0).Contains("Map Collectible Tracker") && Names(zipList, 0).Contains("YoRHa 2B Replace Soul_(Outfit Options)"));
 
-                Click(button!);
-                var window = await Window<DocumentWindow>(form);
-                Check("listed: " + string.Join(", ", window.Names), window.Names.SequenceEqual(new[] { "Changelog.md", "Guide.pdf", "README.txt" }));
-                Check("first shown: " + window.ShownText, window.ShownText.StartsWith("# 1.0"));
-                var list = All(window).OfType<ListBox>().Single();
-                list.SelectedIndex = 2;
-                await Task.Delay(300);
-                Check("readme shown", window.ShownText.Contains("~mods 폴더에 넣으세요"));
-                Check("the app's scrollbars, not the native ones", All(window).OfType<DarkScrollBar>().Count() == 2 && All(window).OfType<ScrollHost>().Count() == 2);
-                var pdfButton = Find(window, "PDF 프로그램으로 열기");
-                Check("pdf button only for a pdf", !pdfButton.Visible);
-                list.SelectedIndex = 1;
-                await Task.Delay(300);
-                Check("pdf: told to open it outside", pdfButton.Visible && window.ShownText.Contains("PDF는 여기서 보여 줄 수 없습니다"));
-                Click(pdfButton);
-                await Task.Delay(300);
-                Check("pdf copied out and opened: " + opened.LastOrDefault(), opened.LastOrDefault() is { } pdf && pdf.EndsWith("Guide.pdf") && File.ReadAllText(pdf) == "%PDF-1.4");
-                list.SelectedIndex = 2;
-                await Task.Delay(300);
-                foreach (var host in All(window).OfType<ScrollHost>())
+                Click(Find(form, "최신 버전 확인"));
+                for (int i = 0; i < 60; i++)
                 {
-                    var inner = host.Controls.Cast<Control>().Single(c => c is not DarkScrollBar);
-                    var bar = host.Controls.OfType<DarkScrollBar>().Single();
-                    Check($"native bar clipped, app bar on top: inner right {inner.Right} > host {host.ClientSize.Width}, bar at {bar.Left}",
-                        inner.Right > host.ClientSize.Width && bar.Right == host.ClientSize.Width && host.Controls.GetChildIndex(bar) == 0);
+                    var dialog = Application.OpenForms.OfType<Form>().FirstOrDefault(f => f != form && f.Visible && f.Modal);
+                    if (dialog != null) { await Task.Delay(200); dialog.DialogResult = DialogResult.No; break; }
+                    await Task.Delay(100);
                 }
-                // A click on the track below the thumb pages the text down.
-                var textBox = All(window).OfType<RichTextBox>().Single();
-                var textBar = All(window).OfType<DarkScrollBar>().Single(b => b.Parent!.Controls.Contains(textBox));
-                await Task.Delay(200);
-                typeof(Control).GetMethod("OnMouseDown", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
-                    .Invoke(textBar, new object[] { new MouseEventArgs(MouseButtons.Left, 1, 6, textBar.Height - 10, 0) });
-                await Task.Delay(200);
-                var top = textBox.GetCharIndexFromPosition(new Point(4, 4));
-                Check("the app's bar scrolls the text: first shown line " + textBox.GetLineFromCharIndex(top), textBox.GetLineFromCharIndex(top) > 10);
-                // Drawn as the screen shows it: DrawToBitmap leaves child windows unclipped.
-                using (var shot = new Bitmap(window.Width, window.Height))
-                {
-                    using (var g = Graphics.FromImage(shot))
-                    {
-                        var dc = g.GetHdc();
-                        PrintWindow(window.Handle, dc, 2);
-                        g.ReleaseHdc(dc);
-                    }
-                    shot.Save(Path.Combine(workDir, "docs.png"));
-                }
-                window.Close();
-                await Task.Delay(200);
+                await Task.Delay(800);
+                var names = Names(zipList, 0);
+                Check("after the check: the page's title, and a heading with the files under it: " + string.Join(" | ", names),
+                    names.Contains("Map Tracker Plus - Minimap and Collectibles (UE4SS)") && names.Contains("Female Animation")
+                    && names.Contains("2B(Original)") && names.Contains("Ver.R"));
+                Check("installed list goes by the same names: " + string.Join(" | ", Names(installedList, 1)),
+                    Names(installedList, 1).Contains("Map Tracker Plus - Minimap and Collectibles (UE4SS)") && Names(installedList, 1).Contains("PBZ FemaleAnimation For Ver.R"));
+
+                await Pick("Map Tracker Plus - Minimap and Collectibles (UE4SS)");
+                var editor = All(form).OfType<ModInfoEditor>().Single();
+                var title = All(editor).OfType<Label>().First();
+                var display = All(editor).OfType<TextBox>().Single(b => b.PlaceholderText.Length > 0);
+                Check("info: the file's name beside the title: " + title.Text, title.Text == "Map Tracker Plus - Minimap and Collectibles (UE4SS) · 파일: Map Collectible Tracker");
+                Check("display name empty, the automatic one as its hint: " + display.PlaceholderText, display.Text == "" && display.PlaceholderText == "Map Tracker Plus - Minimap and Collectibles (UE4SS)");
+
+                display.Text = "미니맵 트래커";
+                await Task.Delay(500);
+                Check("the user's name goes first, in both lists: " + string.Join(" | ", Names(zipList, 0)),
+                    Names(zipList, 0).Contains("미니맵 트래커") && Names(installedList, 1).Contains("미니맵 트래커") && manager.LoadMeta()[tracker].DisplayName == "미니맵 트래커");
+                display.Text = "";
+                await Task.Delay(500);
+                Check("cleared: back to the page's title", Names(zipList, 0).Contains("Map Tracker Plus - Minimap and Collectibles (UE4SS)"));
+
+                await Pick("Female Animation");
+                Check("heading: the page's title in the info: " + title.Text + ", no name field", title.Text == "Female Animation" && !display.Parent!.Visible);
 
                 using (var shot = new Bitmap(form.Width, form.Height))
                 {

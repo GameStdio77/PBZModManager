@@ -16,6 +16,12 @@ public sealed class ModInfoEditor : TableLayoutPanel
     readonly DarkComboBox toolBox = new(ComboBoxStyle.DropDownList);
     readonly TextBox urlBox = Theme.TextBox();
     readonly TextBox memoBox = Theme.TextBox();
+    /// <summary>The name the user gives the mod in the list; empty shows the automatic one, given as the hint.</summary>
+    readonly TextBox displayBox = Theme.TextBox();
+    readonly Label displayLabel = FieldLabel(L.T("표시 이름"));
+    Panel? displayField;
+    /// <summary>The page's title, as the last lookup of the address found it.</summary>
+    public string FoundPageName { get; private set; } = "";
     /// <summary>For a file whose name has no version: the user says which it is.</summary>
     readonly TextBox myVersionBox = Theme.TextBox();
     readonly Label myVersionLabel = FieldLabel(L.T("내 버전"));
@@ -77,7 +83,7 @@ public sealed class ModInfoEditor : TableLayoutPanel
         };
         Disposed += (_, _) => addressPause.Dispose();
         ColumnCount = 2;
-        RowCount = addressFirst ? 11 : 10;
+        RowCount = addressFirst ? 12 : 11;
         Padding = new Padding(8);
         Dock = DockStyle.Fill;
         ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
@@ -155,6 +161,17 @@ public sealed class ModInfoEditor : TableLayoutPanel
         row++;
         myVersionLabel.Visible = myVersionRow.Visible = false;
         myVersionBox.TextChanged += (_, _) => Changed();
+
+        // The name in the list. A mod just added has none of its own yet, so the add dialog leaves it out.
+        displayBox.MaxLength = 120;
+        displayField = Theme.Field(displayBox);
+        displayField.Dock = DockStyle.Fill;
+        displayField.Margin = new Padding(0, 3, 0, 3);
+        Controls.Add(displayLabel, 0, row);
+        Controls.Add(displayField, 1, row);
+        row++;
+        displayLabel.Visible = displayField.Visible = !addressFirst;
+        displayBox.TextChanged += (_, _) => Changed();
 
         Controls.Add(FieldLabel(L.T("카테고리")), 0, row);
         categoryBox.Dock = DockStyle.Fill;
@@ -251,6 +268,18 @@ public sealed class ModInfoEditor : TableLayoutPanel
     }
 
     public string Memo => memoBox.Text.Trim();
+    public string DisplayName => displayBox.Text.Trim();
+
+    /// <summary>Shows the user's own name for the mod, with the automatic one as the hint when it is empty.</summary>
+    public void SetDisplayName(string own, string automatic)
+    {
+        var was = loading;
+        loading = true;
+        if (displayBox.Text != own) displayBox.Text = own;
+        displayBox.PlaceholderText = automatic;
+        displayBox.ReadOnly = automatic.Length == 0;
+        loading = was;
+    }
     /// <summary>The version the user typed for a file without one in its name.</summary>
     public string MyVersion => myVersionRow.Visible ? myVersionBox.Text.Trim().TrimStart('v', 'V') : "";
 
@@ -300,6 +329,11 @@ public sealed class ModInfoEditor : TableLayoutPanel
         Show(memoLabel, !page || keepMemo);
         Show(memoField!, !page || keepMemo);
         if (page) myVersionLabel.Visible = myVersionRow.Visible = false;
+        if (!addressFirst)
+        {
+            Show(displayLabel, !page);
+            Show(displayField!, !page);
+        }
         if (page) pictureCount = documentCount = 0;
         if (page) ShowContents();
         if (page) downloadButton.Enabled = true;
@@ -410,10 +444,10 @@ public sealed class ModInfoEditor : TableLayoutPanel
         var address = Url;
         if ((!refetch && Category.Length > 0 && InstallNotes.Trim().Length > 0) || NexusApi.LinkFor(address, Array.Empty<string>()) is not { } link) return;
 
-        (string Category, string InstallNotes) found;
+        (string Name, string Category, string InstallNotes) found;
         try
         {
-            found = await Task.Run(() => NexusApi.GetPageInfo(link));
+            found = await Task.Run(() => NexusApi.GetPage(link));
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or InvalidOperationException
             or System.Text.Json.JsonException or KeyNotFoundException or OverflowException)
@@ -423,6 +457,7 @@ public sealed class ModInfoEditor : TableLayoutPanel
 
         // The user may have moved to another mod, changed the address or filled the fields meanwhile.
         if (IsDisposed || Url != address) return;
+        if (found.Name.Length > 0) FoundPageName = found.Name;
         if ((refetch || InstallNotes.Trim().Length == 0) && found.InstallNotes.Length > 0 && !urlBox.ReadOnly)
             notesBox.Text = found.InstallNotes.ReplaceLineEndings("\r\n");
         if (Category.Length == 0 && found.Category.Length > 0) CategoryFound?.Invoke(found.Category);
@@ -804,6 +839,7 @@ public sealed class ModInfoDialog : Form
         note.InstallNotes = editor.InstallNotes;
         note.Tool = editor.Tool;
         note.Version = editor.MyVersion;
+        if (editor.FoundPageName.Length > 0) note.PageName = editor.FoundPageName;
     }
 }
 

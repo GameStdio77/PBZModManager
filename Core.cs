@@ -277,10 +277,29 @@ public static class ModIdentity
             if (slash > 0) ids.Add(rest[..slash]);
         }
         var parsed = ParseFileName(fileName);
-        if (parsed.PageId.Length > 0) return $"page:{parsed.PageId}:{parsed.Name.ToLowerInvariant()}";
-        return ids.Count > 0
+        if (parsed.PageId.Length > 0) return Follow(PageKey(parsed.PageId, parsed.Name));
+        return Follow(ids.Count > 0
             ? "mods:" + string.Join(",", ids).ToLowerInvariant()
-            : "name:" + parsed.Name.ToLowerInvariant();
+            : "name:" + parsed.Name.ToLowerInvariant());
+    }
+
+    /// <summary>The key of a Nexus page's file by its name, as a download of it would get.</summary>
+    public static string PageKey(string pageId, string name) => $"page:{pageId}:{name.ToLowerInvariant()}";
+
+    // A file the author renamed keeps being the mod it was: its new key leads to the old one.
+    static Dictionary<string, string> renames = new(StringComparer.OrdinalIgnoreCase);
+
+    public static void UseRenames(IEnumerable<ModRename> links) =>
+        renames = links.Where(l => !l.From.Equals(l.To, StringComparison.OrdinalIgnoreCase))
+            .GroupBy(l => l.From, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.Last().To, StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>The key a mod has been known by, through any renames; a loop stops where it began.</summary>
+    public static string Follow(string key)
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { key };
+        while (renames.TryGetValue(key, out var to) && seen.Add(to)) key = to;
+        return key;
     }
 
     /// <summary>The mod a path in Mods Menu's mods folder belongs to, when the loader could run it under that name.</summary>
@@ -472,6 +491,12 @@ public sealed class RemoteInfo
     public string LocalVersion { get; set; } = "";
     /// <summary>What Nexus files this mod's file under: MAIN, OPTIONAL, MISCELLANEOUS... Empty when not known.</summary>
     public string FileCategory { get; set; } = "";
+    /// <summary>The title of the mod's page.</summary>
+    public string PageName { get; set; } = "";
+    /// <summary>The name the author gave this file since, when its old name is left only on old versions.</summary>
+    public string RenamedTo { get; set; } = "";
+    /// <summary>The file is only in old versions on the page, and no current file looks like it: the user picks.</summary>
+    public bool Retired { get; set; }
     public DateTime CheckedAt { get; set; }
 }
 
@@ -598,6 +623,16 @@ public static class NexusApi
     }
 
     /// <summary>Where a mod lives on Nexus: the address the user entered, or else the page number in a download's name.</summary>
+    /// <summary>
+    /// A page's title as a mod's name: a version the author left at its end, often an old one such as
+    /// "_v2.0" while the files are at 2.1.1, is taken off.
+    /// </summary>
+    public static string TitleAsName(string title)
+    {
+        var trimmed = System.Text.RegularExpressions.Regex.Replace(title.Trim(), @"[\s_-]*\(?[vV]?\d+(\.\d+)+[a-z]?\)?$", "").Trim(' ', '_', '-');
+        return trimmed.Length > 0 ? trimmed : title.Trim();
+    }
+
     /// <summary>A mod number typed alone, such as "300", as the full address of that mod's page; anything else as it is.</summary>
     public static string FullAddress(string text)
     {
@@ -637,6 +672,31 @@ public static class NexusApi
         var sameVariant = mine.FirstOrDefault(f => ModIdentity.CompareVersions(f.Version, newest.Version) == 0
             && VariantOf(f.Name).Equals(variant, StringComparison.OrdinalIgnoreCase));
         return (sameVariant ?? newest).FileId;
+    }
+
+    static bool IsCurrent(NexusFile f) =>
+        f.Version.Length > 0 && !new[] { "OLD_VERSION", "ARCHIVED", "REMOVED" }.Contains(f.Category, StringComparer.OrdinalIgnoreCase);
+
+    // "PBZ FemaleAnimation For 2B(Original)" is "PBZ FemaleAnimation for 2B" with a note added.
+    static string BaseName(string name) =>
+        System.Text.RegularExpressions.Regex.Replace(name, @"\s*[\(\[][^\)\]]*[\)\]]\s*$", "").Trim();
+
+    /// <summary>
+    /// When the author renamed a file, its old name is left only on old versions. The current file that
+    /// carries the old name, with a note in brackets added or dropped, takes its place; a main file before an optional one.
+    /// Null when the file is still current under its name, or was never on the page.
+    /// </summary>
+    public static (NexusFile? Successor, bool Retired) SuccessorOf(string localName, IReadOnlyCollection<NexusFile> files)
+    {
+        var mine = MineOf(localName, files);
+        if (mine.Count == 0 || mine.Any(IsCurrent)) return (null, false);
+        var stem = BaseName(localName);
+        var like = files.Where(f => IsCurrent(f) && !f.Name.Equals(localName, StringComparison.OrdinalIgnoreCase)
+                && BaseName(ModIdentity.ParseFileName(f.Name + ".zip").Name).Equals(stem, StringComparison.OrdinalIgnoreCase))
+            .OrderBy(f => f.Category.Equals("MAIN", StringComparison.OrdinalIgnoreCase) ? 0 : 1)
+            .ThenByDescending(f => f.Version, Comparer<string>.Create(ModIdentity.CompareVersions))
+            .ToList();
+        return like.Count > 0 ? (like[0], false) : (null, true);
     }
 
     static List<NexusFile> MineOf(string localName, IEnumerable<NexusFile> files) =>
@@ -740,7 +800,7 @@ public static class NexusApi
             var aliases = string.Concat(ids.Select(id => $"m{id}: modFiles(modId:\"{id}\", gameId:\"{gameId}\"){{ fileId name version category }} "));
             var body = JsonSerializer.Serialize(new
             {
-                query = "query($ids:[CompositeDomainWithIdInput!]!){ legacyModsByDomain(ids:$ids){ nodes { modId version status modCategory { name } } } " + aliases + "}",
+                query = "query($ids:[CompositeDomainWithIdInput!]!){ legacyModsByDomain(ids:$ids){ nodes { modId name version status modCategory { name } } } " + aliases + "}",
                 variables = new { ids = ids.Select(id => new { gameDomain = game.Key, modId = int.Parse(id) }) },
             });
             foreach (var pair in ParseResponse(Post(body), game.Select(m => (m.Key, m.LocalName, m.LocalFile, m.Link.ModId)).ToList()))
@@ -759,6 +819,7 @@ public static class NexusApi
 
         var pages = data.GetProperty("legacyModsByDomain").GetProperty("nodes").EnumerateArray()
             .ToDictionary(n => Text(n, "modId"), n => (
+                Name: Text(n, "name"),
                 Version: Text(n, "version"),
                 Status: Text(n, "status"),
                 Category: n.TryGetProperty("modCategory", out var c) && c.ValueKind == JsonValueKind.Object ? Text(c, "name") : ""));
@@ -772,11 +833,29 @@ public static class NexusApi
             pages.TryGetValue(modId, out var page);
             var (version, matched) = ChooseVersion(localName, files, page.Version ?? "");
             if (version.Length == 0) continue;
-            results[key] = new RemoteInfo
+            var info = new RemoteInfo
             {
-                Version = version, MatchedFile = matched, Status = page.Status ?? "", Category = page.Category ?? "",
+                Version = version, MatchedFile = matched, Status = page.Status ?? "", Category = page.Category ?? "", PageName = System.Net.WebUtility.HtmlDecode(page.Name ?? "").Trim(),
                 FileId = ChooseFileId(localName, localFile, files), FileCategory = FileCategoryOf(localName, files), CheckedAt = DateTime.Now,
             };
+            // Its name is left only on old versions: the renamed file, or else the page's newest, is what to get.
+            var (successor, retired) = SuccessorOf(localName, files);
+            if (successor != null)
+            {
+                info.Version = successor.Version;
+                info.FileId = successor.FileId;
+                info.FileCategory = successor.Category.ToUpperInvariant();
+                info.RenamedTo = successor.Name;
+            }
+            else if (retired)
+            {
+                info.Retired = true;
+                info.MatchedFile = false;
+                info.FileId = "";
+                var current = files.Where(IsCurrent).ToList();
+                if (current.Count > 0) info.Version = Newest(current).Version;
+            }
+            results[key] = info;
         }
         return results;
     }
@@ -936,6 +1015,9 @@ public sealed class ModGroup
 {
     public required string Key { get; init; }
     public required string Name { get; init; }
+    /// <summary>The name shown for the mod, as the window works it out; empty shows <see cref="Name"/>, the file's.</summary>
+    public string Title { get; set; } = "";
+    public string Shown => Title.Length > 0 ? Title : Name;
     /// <summary>What the newest archive's contents say the mod is made for.</summary>
     public string Tool { get; init; } = "";
     public required List<ModVersion> Versions { get; init; }
@@ -1025,8 +1107,13 @@ public sealed class ModMeta
     public string PinnedVersion { get; set; } = "";
     /// <summary>The user added this archive to the list. Other files in the folder are not shown.</summary>
     public bool Registered { get; set; }
+    /// <summary>The title of the mod's Nexus page, as last read from it.</summary>
+    public string PageName { get; set; } = "";
+    /// <summary>The name the user gave the mod in the list; it comes before the page's title and the file's name.</summary>
+    public string DisplayName { get; set; } = "";
 
-    public bool IsEmpty() => !Registered && Category.Length == 0 && Url.Length == 0 && Memo.Length == 0 && Tool.Length == 0 && InstallNotes.Length == 0;
+    public bool IsEmpty() => !Registered && Category.Length == 0 && Url.Length == 0 && Memo.Length == 0 && Tool.Length == 0 && InstallNotes.Length == 0
+        && PageName.Length == 0 && DisplayName.Length == 0;
 
     /// <summary>
     /// Brings notes from before install steps had their own place: steps that were put in the memo move out,
@@ -1086,6 +1173,7 @@ public sealed partial class Manager
         Directory.CreateDirectory(TmpDir);
         Directory.CreateDirectory(ArchiveDir);
         settings = LoadSettings();
+        ModIdentity.UseRenames(LoadRenames());
         TrimLog();
     }
 
