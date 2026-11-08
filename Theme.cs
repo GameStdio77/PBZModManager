@@ -85,6 +85,9 @@ public static class Theme
             box.ScrollBars = ScrollBars.Vertical;
             box.AcceptsReturn = true;
         }
+        // The input method can come to these fields in full-width mode, typing "２Ｂ" and full-width spaces; it is
+        // put back to half-width each time a field is entered. Hangul or Latin input stays as the user had it.
+        box.GotFocus += (_, _) => { if (box.IsHandleCreated) box.BeginInvoke(() => Ime.UseHalfWidth(box)); };
         return box;
     }
 
@@ -423,6 +426,81 @@ public sealed class DarkMenuRenderer : ToolStripProfessionalRenderer
         public override Color ImageMarginGradientEnd => Theme.Surface;
         public override Color SeparatorDark => Theme.Border;
     }
+}
+
+/// <summary>The input method's state for one control.</summary>
+public static class Ime
+{
+    const int FullShape = 0x0008;
+
+    /// <summary>Takes the input method out of full-width mode for the control; true when it was in it.</summary>
+    public static bool UseHalfWidth(Control control)
+    {
+        if (!control.IsHandleCreated) return false;
+        var context = ImmGetContext(control.Handle);
+        if (context == IntPtr.Zero) return false;
+        try
+        {
+            if (!ImmGetConversionStatus(context, out var conversion, out var sentence) || (conversion & FullShape) == 0) return false;
+            return ImmSetConversionStatus(context, conversion & ~FullShape, sentence);
+        }
+        finally
+        {
+            ImmReleaseContext(control.Handle, context);
+        }
+    }
+
+    /// <summary>Whether the control's input method is in full-width mode now.</summary>
+    public static bool IsFullWidth(Control control)
+    {
+        var context = ImmGetContext(control.Handle);
+        if (context == IntPtr.Zero) return false;
+        try { return ImmGetConversionStatus(context, out var conversion, out _) && (conversion & FullShape) != 0; }
+        finally { ImmReleaseContext(control.Handle, context); }
+    }
+
+    /// <summary>Puts the control's input method in full-width mode; for checks.</summary>
+    public static void UseFullWidthForChecks(Control control)
+    {
+        var context = ImmGetContext(control.Handle);
+        if (context == IntPtr.Zero) return;
+        try { if (ImmGetConversionStatus(context, out var conversion, out var sentence)) ImmSetConversionStatus(context, conversion | FullShape, sentence); }
+        finally { ImmReleaseContext(control.Handle, context); }
+    }
+
+    [System.Runtime.InteropServices.DllImport("imm32.dll")]
+    static extern IntPtr ImmGetContext(IntPtr hwnd);
+
+    [System.Runtime.InteropServices.DllImport("imm32.dll")]
+    static extern bool ImmReleaseContext(IntPtr hwnd, IntPtr context);
+
+    [System.Runtime.InteropServices.DllImport("imm32.dll")]
+    static extern bool ImmGetConversionStatus(IntPtr context, out int conversion, out int sentence);
+
+    [System.Runtime.InteropServices.DllImport("imm32.dll")]
+    static extern bool ImmSetConversionStatus(IntPtr context, int conversion, int sentence);
+}
+
+/// <summary>
+/// Types a full-width space (U+3000), which a Korean or Japanese IME gives in its full-width mode, as an
+/// ordinary space everywhere in the app: in names, memos and addresses it only looks like one.
+/// </summary>
+public sealed class FullWidthSpaceFilter : IMessageFilter
+{
+    const int WmChar = 0x0102, WmImeChar = 0x0286;
+
+    // A changed message is not passed on as changed, so the full-width one is dropped and a space sent instead.
+    // Only the final character is caught: the input method's own message turns into one of these by itself.
+    public bool PreFilterMessage(ref Message m)
+    {
+        if (m.Msg != WmChar || (long)m.WParam != 0x3000) return false;
+        // Sent now, so it keeps its place among the keys still waiting.
+        SendMessageW(m.HWnd, WmChar, (IntPtr)' ', m.LParam);
+        return true;
+    }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    static extern IntPtr SendMessageW(IntPtr hwnd, int message, IntPtr wParam, IntPtr lParam);
 }
 
 public sealed class DarkButton : Button

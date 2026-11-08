@@ -1488,6 +1488,103 @@ Test("after an update, the version updated from can be deleted; the one in effec
     Check(m.ListZips(meta).Select(Path.GetFileName).Contains(Path.GetFileName(v1)), "the old version is listed again, now in effect");
 });
 
+Test("presets: kept, and what applying them does in each way", root =>
+{
+    var m = new Manager(root);
+    var a1 = Zip(root, "Alpha 900 1.0 2026-11-01T00-00Z a.zip", ("ProjectPBZ/Content/Paks/~mods/Alpha_P.pak", "1"));
+    var a2 = Zip(root, "Alpha 900 2.0 2026-11-02T00-00Z b.zip", ("ProjectPBZ/Content/Paks/~mods/Alpha_P.pak", "2"));
+    var beta = Zip(root, "Beta 901 1.0 2026-11-01T00-00Z c.zip", ("ProjectPBZ/Content/Paks/~mods/Beta_P.pak", "b"));
+    var gamma = Zip(root, "Gamma 902 1.0 2026-11-01T00-00Z d.zip", ("ProjectPBZ/Content/Paks/~mods/Gamma_P.pak", "g"));
+    var opt = Zip(root, "Opt 903 1.0 2026-11-01T00-00Z e.zip", ("Red/x_P.pak", "r"), ("Blue/x_P.pak", "b"));
+    var meta = new Dictionary<string, ModMeta>();
+    foreach (var z in new[] { a1, a2, beta, gamma, opt }) meta[Path.GetFileName(z)] = new ModMeta { Registered = true };
+    Install(m, a1);
+    Install(m, beta);
+    m.Install(m.BuildPlan(opt, new[] { "Red" }));
+    var mods = m.ListMods(meta);
+    var installed = m.ListInstalled();
+    string KeyOf(string zip) => ModIdentity.KeyOfZip(zip);
+
+    var preset = new Preset
+    {
+        Name = "Base",
+        Mods =
+        {
+            new PresetMod { Key = KeyOf(a1), Name = "Alpha", Version = "1.0", Pinned = true },
+            new PresetMod { Key = KeyOf(gamma), Name = "Gamma", Version = "1.0" },
+            new PresetMod { Key = KeyOf(opt), Name = "Opt", Version = "1.0", Options = new() { "Blue" }, Excluded = new() },
+            new PresetMod { Key = "page:999:gone", Name = "Gone", Version = "1.0" },
+        },
+        Order = { "sep:Characters", KeyOf(gamma), KeyOf(a1) },
+    };
+    m.SavePresets(new[] { preset });
+    var back = m.LoadPresets().Single();
+    Check(back.Name == "Base" && back.Mods.Count == 4 && back.Mods[2].Options!.Single() == "Blue" && back.Mods[1].Options == null && back.Order.Count == 3, "kept and read back");
+
+    string Show(List<PresetStep> steps) => string.Join(", ", steps.Select(s => $"{s.Name}:{s.Action}"));
+    var match = PresetPlanner.Plan(preset, PresetMode.Match, mods, installed);
+    Check(Show(match) == "Alpha:Keep, Gamma:Install, Opt:Reinstall, Gone:Skip, Beta:Remove", "match: " + Show(match));
+    var on = PresetPlanner.Plan(preset, PresetMode.TurnOn, mods, installed);
+    Check(Show(on) == "Alpha:Keep, Gamma:Install, Opt:Reinstall, Gone:Skip", "turn on leaves the others: " + Show(on));
+    var off = PresetPlanner.Plan(preset, PresetMode.TurnOff, mods, installed);
+    Check(Show(off) == "Alpha:Remove, Gamma:Keep, Opt:Remove, Gone:Keep", "turn off: " + Show(off));
+    Check(PresetPlanner.Differences(preset, mods, installed) == 3 && !PresetPlanner.IsOff(preset, installed), "differences counted among its own mods");
+
+    // Not pinned: the newest is meant. Pinned to a file that is gone: skipped, with the newest offered.
+    preset.Mods[0].Pinned = false;
+    Check(PresetPlanner.Plan(preset, PresetMode.TurnOn, mods, installed)[0] is { Action: PresetAction.Update, Note: "1.0 → 2.0" }, "the newest when not pinned");
+    preset.Mods[0].Pinned = true;
+    preset.Mods[0].Version = "0.9";
+    var gone = PresetPlanner.Plan(preset, PresetMode.TurnOn, mods, installed)[0];
+    Check(gone.Action == PresetAction.Skip && gone.Fallback?.Version == "2.0", "pinned file gone: " + gone.Note);
+
+    // A preset saved before the file was renamed still finds its mod.
+    var renamed = Zip(root, "Alpha Renamed 900 3.0 2026-11-03T00-00Z f.zip", ("ProjectPBZ/Content/Paks/~mods/Alpha_P.pak", "3"));
+    m.LinkRename(KeyOf(renamed), KeyOf(a1));
+    meta[Path.GetFileName(renamed)] = new ModMeta { Registered = true };
+    preset.Mods[0].Pinned = false;
+    var follow = PresetPlanner.Plan(preset, PresetMode.TurnOn, m.ListMods(meta), installed)[0];
+    Check(follow.Action == PresetAction.Update && follow.Version?.Version == "3.0", "followed through the rename: " + follow.Note);
+
+    // The order: the preset's first, with its separator, then the rest.
+    Install(m, gamma);
+    m.AddSeparator("Old one", null);
+    m.ApplyPresetOrder(preset.Order);
+    var rows = m.InstalledRows().Select(r => r.IsSeparator ? "sep:" + r.Text : r.Mod!.Name).ToList();
+    Check(string.Join(" | ", rows).StartsWith("sep:Characters | Gamma | Alpha | "), "order applied: " + string.Join(" | ", rows));
+    new Manager(Path.Combine(root, "elsewhere"));
+});
+
+Test("presets: one group's presets are not used together", root =>
+{
+    var m = new Manager(root);
+    var look1 = Zip(root, "Look One 910 1.0 2026-11-01T00-00Z a.zip", ("ProjectPBZ/Content/Paks/~mods/Look1_P.pak", "1"));
+    var look2 = Zip(root, "Look Two 911 1.0 2026-11-01T00-00Z b.zip", ("ProjectPBZ/Content/Paks/~mods/Look2_P.pak", "2"));
+    var shared = Zip(root, "Body 912 1.0 2026-11-01T00-00Z c.zip", ("ProjectPBZ/Content/Paks/~mods/Body_P.pak", "b"));
+    var other = Zip(root, "Other 913 1.0 2026-11-01T00-00Z d.zip", ("ProjectPBZ/Content/Paks/~mods/Other_P.pak", "o"));
+    var meta = new Dictionary<string, ModMeta>();
+    foreach (var z in new[] { look1, look2, shared, other }) meta[Path.GetFileName(z)] = new ModMeta { Registered = true };
+    Install(m, look1);
+    Install(m, shared);
+    Install(m, other);
+    var mods = m.ListMods(meta);
+    var installed = m.ListInstalled();
+    PresetMod Entry(string zip) => new() { Key = ModIdentity.KeyOfZip(zip), Name = ModIdentity.ParseFileName(Path.GetFileName(zip)).Name, Version = "1.0" };
+    var one = new Preset { Name = "Look 1", Group = "A", Mods = { Entry(look1), Entry(shared) } };
+    var two = new Preset { Name = "Look 2", Group = " a ", Mods = { Entry(look2), Entry(shared) } };
+    var elsewhere = new Preset { Name = "Other", Group = "B", Mods = { Entry(other) } };
+    var all = new[] { one, two, elsewhere };
+    string Show(List<PresetStep> steps) => string.Join(", ", steps.Select(s => $"{s.Name}:{s.Action}{(s.Note.Length > 0 ? "(" + s.Note + ")" : "")}"));
+
+    var on = PresetPlanner.Plan(two, PresetMode.TurnOn, mods, installed, all);
+    Check(Show(on) == "Look Two:Install(1.0), Body:Keep(1.0), Look One:Remove(교체 그룹 A: Look 1)", "the other look goes first, the shared mod stays: " + Show(on));
+    var match = PresetPlanner.Plan(two, PresetMode.Match, mods, installed, all);
+    Check(match.Count(s => s.Action == PresetAction.Remove) == 2 && match.Count(s => s.Name == "Look One") == 1, "match removes it once: " + Show(match));
+    Check(Show(PresetPlanner.Plan(two, PresetMode.TurnOff, mods, installed, all)) == "Look Two:Keep(설치되어 있지 않음), Body:Remove", "turning off leaves the group alone");
+    two.Group = "";
+    Check(!PresetPlanner.Plan(two, PresetMode.TurnOn, mods, installed, all).Any(s => s.Action == PresetAction.Remove), "no group, nothing removed");
+});
+
 Test("the same file under another name is not added twice", root =>
 {
     var m = new Manager(root);

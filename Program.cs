@@ -42,6 +42,7 @@ static class Program
         var manager = new Manager(root, modDir);
         try { manager.RememberGameRoot(); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { /* found again next time */ }
+        Application.AddMessageFilter(new FullWidthSpaceFilter());
         Application.Run(new MainForm(manager, files));
         mutex.ReleaseMutex();
         return 0;

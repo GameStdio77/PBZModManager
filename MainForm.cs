@@ -142,7 +142,7 @@ public sealed partial class MainForm : Form, IMessageFilter
 
         var lower = new DarkSplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Horizontal, FixedPanel = FixedPanel.Panel2 };
         Theme.StyleSplit(lower);
-        lower.Panel1.Controls.Add(Theme.Group(L.T("설치된 모드"), installedList, removeButton, optionsButton, moveUpButton, moveDownButton, separatorButton, openLeftoversButton, clearLeftoversButton));
+        lower.Panel1.Controls.Add(Theme.Group(L.T("설치된 모드"), installedList, removeButton, optionsButton, moveUpButton, moveDownButton, separatorButton, presetButton, openLeftoversButton, clearLeftoversButton));
         lower.Panel2.Controls.Add(Theme.Group(L.T("선택한 모드의 파일"), fileList));
 
         var main = new DarkSplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Vertical };
@@ -238,6 +238,7 @@ public sealed partial class MainForm : Form, IMessageFilter
         };
         optionsButton.Click += async (_, _) => { if (SelectedInstalled() is { } mod) await ChangeOptions(mod); };
         separatorButton.Click += async (_, _) => { await Task.Yield(); await AddSeparator(); };
+        presetButton.Click += async (_, _) => { await Task.Yield(); await OpenPresets(); };
         installedList.DoubleClick += async (_, _) => { await Task.Yield(); if (SelectedRow() is { IsSeparator: true } row) await RenameSeparator(row); };
         moveUpButton.Click += async (_, _) => await MoveSelected(-1);
         moveDownButton.Click += async (_, _) => await MoveSelected(1);
@@ -1576,29 +1577,8 @@ public sealed partial class MainForm : Form, IMessageFilter
         var errors = new List<string>();
         foreach (var (mod, version) in work)
         {
-            List<string>? options = null;
-            var groups = await Run(L.T("압축 파일 확인 중..."), _ => manager.OptionGroups(version.Path));
-            if (groups == null) { errors.Add(L.F("{0}: 압축 파일을 읽지 못했습니다.", mod.Shown)); continue; }
-            if (groups.Count > 0 && manager.PreviousOptions(version.Path).Count == 0)
-            {
-                using var dialog = new OptionsDialog(mod.Shown, groups, Array.Empty<string>());
-                if (dialog.ShowDialog(this) != DialogResult.OK) { errors.Add(L.F("{0}: 옵션을 고르지 않아 건너뜀", mod.Shown)); continue; }
-                options = dialog.Chosen;
-            }
-            var done = await Run(L.F("{0} 설치 중...", mod.Shown), p =>
-            {
-                try
-                {
-                    var plan = manager.BuildPlan(version.Path, options, progress: p);
-                    if (plan.HasChanges) manager.Install(plan, p);
-                    return "";
-                }
-                catch (Exception ex) when (ex is InvalidOperationException or IOException or UnauthorizedAccessException or InvalidDataException)
-                {
-                    return ex.Message;
-                }
-            });
-            if (done is { Length: > 0 }) errors.Add($"{mod.Shown}: {done}");
+            var problem = await InstallOne(mod, version, null, null);
+            if (problem.Length > 0) errors.Add($"{mod.Shown}: {problem}");
         }
         await RefreshAll();
         if (errors.Count > 0) DarkDialog.Show(this, L.T("설치하지 못한 모드:\n") + string.Join("\n", errors), L.T("여러 모드 설치"), isError: true);
@@ -1784,8 +1764,19 @@ public sealed partial class MainForm : Form, IMessageFilter
                 : zipList.SelectedItems.Count > 0 ? RowKey(zipList.SelectedItems[0].Tag) : null);
         selectAfterRefresh = null;
         selectRowAfterRefresh = null;
-        var filter = filterBox.SelectedItem as string ?? Manager.AllCategories;
+        var rows = ModListRows(filterBox.SelectedItem as string ?? Manager.AllCategories);
+        zipList.SetRows(rows);
+        zipList.KeepSelection(i => RowKey(i.Tag) == selectedKey);
+        LoadNote();
+        UpdateButtons();
+    }
 
+    /// <summary>
+    /// The mod list's lines under a category filter: installed pages first, by name; a page with several files
+    /// under a heading, or as a tree; a line between the installed and the rest.
+    /// </summary>
+    List<ListRow> ModListRows(string filter)
+    {
         string GroupSortName(List<ListEntry> g)
         {
             var pageTitle = g.Select(x => x.Mod).OfType<ModGroup>().Select(PageTitleOf).FirstOrDefault(n => n.Length > 0);
@@ -1838,10 +1829,7 @@ public sealed partial class MainForm : Form, IMessageFilter
             }
         }
 
-        zipList.SetRows(rows);
-        zipList.KeepSelection(i => RowKey(i.Tag) == selectedKey);
-        LoadNote();
-        UpdateButtons();
+        return rows;
     }
 
     /// <summary>Draws the installed list from the rows last read.</summary>

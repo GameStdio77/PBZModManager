@@ -84,6 +84,7 @@ public sealed partial class MainForm
 
         items.Add(Press(installButton));
         items.AddRange(UpdateCheckItems(chosen));
+        items.Add(PresetMenu(chosen));
         if (chosen.Count == 1)
         {
             var mod = chosen[0];
@@ -135,6 +136,7 @@ public sealed partial class MainForm
         var groups = SelectedInstalledMods().Select(GroupOf).OfType<ModGroup>().ToList();
         items.Add(null);
         items.AddRange(UpdateCheckItems(groups));
+        items.Add(PresetMenu(groups));
         if (row.Mod is { } installed && SelectedInstalledMods().Count == 1)
         {
             items.Add(null);
