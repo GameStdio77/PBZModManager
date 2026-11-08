@@ -608,7 +608,7 @@ public static class NexusApi
         client.DefaultRequestHeaders.Add("User-Agent", "PBZModManager/1.5");
         // Nexus's API policy asks every client to identify itself with these two.
         client.DefaultRequestHeaders.Add("Application-Name", "PBZModManager");
-        client.DefaultRequestHeaders.Add("Application-Version", "1.5.0");
+        client.DefaultRequestHeaders.Add("Application-Version", "1.5.1");
         return client;
     }
 
