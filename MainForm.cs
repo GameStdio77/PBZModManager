@@ -209,6 +209,9 @@ public sealed partial class MainForm : Form, IMessageFilter
             SetSplit(zipSplit, saved?.LeftSplit ?? 0, Math.Max(200, zipSplit.Height - 330));
             SetSplit(lower, zipSplit.SplitterDistance, zipSplit.SplitterDistance);
             lowerHeight = zipSplit.Height - zipSplit.SplitterDistance - zipSplit.SplitterWidth;
+            zipList.SetColumnWidths(saved?.ModColumns);
+            installedList.SetColumnWidths(saved?.InstalledColumns);
+            fileList.SetColumnWidths(saved?.FileColumns);
             // Archives earlier versions kept beside the program move into the records once.
             if (Directory.EnumerateFiles(manager.ModDir, "*.zip").Any())
                 await Run(L.T("모드 파일 옮기는 중..."), p => manager.MoveArchivesIn(p));
@@ -543,8 +546,9 @@ public sealed partial class MainForm : Form, IMessageFilter
         await RefreshAll();
     }
 
+    /// <summary>The archive a mod is installed from now. Versions it was updated from do not count: they can go.</summary>
     bool IsInstalledFile(string fileName) =>
-        history.Any(t => t.ZipName.Equals(fileName, StringComparison.OrdinalIgnoreCase));
+        mods.Any(m => m.InstalledFile?.Equals(fileName, StringComparison.OrdinalIgnoreCase) == true);
 
     /// <summary>Versions kept besides the newest and the installed one: those a clean-up can delete.</summary>
     List<ModVersion> OldVersions(ModGroup mod) =>
@@ -1198,6 +1202,7 @@ public sealed partial class MainForm : Form, IMessageFilter
                 X = normal.X, Y = normal.Y, Width = normal.Width, Height = normal.Height,
                 Maximized = WindowState == FormWindowState.Maximized,
                 MainSplit = main.SplitterDistance, LeftSplit = left.SplitterDistance, RightSplit = right.SplitterDistance,
+                ModColumns = zipList.ColumnWidths, InstalledColumns = installedList.ColumnWidths, FileColumns = fileList.ColumnWidths,
             });
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)

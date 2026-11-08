@@ -1460,6 +1460,34 @@ Test("page titles: a trailing version is taken off, and the check reads the titl
     Check(parsed["t"].PageName == "Map Tracker Plus & More", "the page's title, decoded: " + parsed["t"].PageName);
 });
 
+Test("after an update, the version updated from can be deleted; the one in effect cannot", root =>
+{
+    var m = new Manager(root);
+    var v1 = Zip(root, "Ninja 444 1 2026-11-03T14-58Z vB84Zu5C1.zip", ("ProjectPBZ/Content/Paks/~mods/Ninja_P.pak", "1"));
+    var v2 = Zip(root, "Ninja 444 2 2026-11-07T18-24Z 8TxGunI7o.zip", ("ProjectPBZ/Content/Paks/~mods/Ninja_P.pak", "2"));
+    Install(m, v1);
+    var top = Install(m, v2);
+    Check(m.ArchivesInEffect().SetEquals(new[] { Path.GetFileName(v2) }), "the update is in effect");
+    var meta = m.LoadMeta();
+    m.RegisterInstalled(meta);
+    meta[Path.GetFileName(v1)] = new ModMeta { Registered = true };
+
+    bool refused = false;
+    try { m.DeleteZip(Path.GetFileName(v2)); } catch (InvalidOperationException) { refused = true; }
+    Check(refused && File.Exists(v2), "the archive in effect is kept");
+    m.DeleteZip(Path.GetFileName(v1));
+    Check(!File.Exists(v1), "the one updated from goes");
+
+    meta[Path.GetFileName(v1)].Registered = false;
+    Check(m.ListZips(meta).Select(Path.GetFileName).SequenceEqual(new[] { Path.GetFileName(v2) }), "and leaves the list: " + string.Join(", ", m.ListZips(meta).Select(Path.GetFileName)));
+    Check(!m.RegisterInstalled(meta) && !meta[Path.GetFileName(v1)].Registered, "it is not listed again by itself");
+
+    // Undoing the update brings the old version back into effect: listed again, though its file is gone.
+    m.RemoveOne(top.Id);
+    Check(Read(root, "ProjectPBZ/Content/Paks/~mods/Ninja_P.pak") == "1", "undo restores the old version from its backups");
+    Check(m.ListZips(meta).Select(Path.GetFileName).Contains(Path.GetFileName(v1)), "the old version is listed again, now in effect");
+});
+
 Test("the same file under another name is not added twice", root =>
 {
     var m = new Manager(root);

@@ -68,6 +68,10 @@ public sealed class WindowLayout
     public int MainSplit { get; set; }
     public int LeftSplit { get; set; }
     public int RightSplit { get; set; }
+    /// <summary>The column widths of the mod list, the installed list and the file list, as the user left them.</summary>
+    public int[]? ModColumns { get; set; }
+    public int[]? InstalledColumns { get; set; }
+    public int[]? FileColumns { get; set; }
 }
 
 /// <summary>Which script loader runs the JavaScript mods. Auto follows the one that is installed.</summary>
@@ -1358,7 +1362,10 @@ public sealed partial class Manager
     /// <summary>Archives on the list: those the user registered, plus anything currently installed.</summary>
     public List<string> ListZips(IReadOnlyDictionary<string, ModMeta> meta)
     {
-        var names = meta.Where(p => p.Value.Registered).Select(p => p.Key).Concat(History().Select(t => t.ZipName));
+        // An archive under the one in effect, from before an update, goes once the user took it off or deleted it.
+        var inEffect = ArchivesInEffect();
+        var names = meta.Where(p => p.Value.Registered).Select(p => p.Key)
+            .Concat(History().Select(t => t.ZipName).Where(n => inEffect.Contains(n) || !meta.TryGetValue(n, out var note) || note.Registered));
         // A file that went missing stays listed, marked as such, so its notes and installs are not lost from view.
         return names.Distinct(StringComparer.OrdinalIgnoreCase)
             .Select(name => Path.Combine(ArchiveDir, name))
@@ -1367,12 +1374,20 @@ public sealed partial class Manager
     }
 
     /// <summary>
-    /// Sends an archive in the MOD folder to the Recycle Bin. The one an installed mod came from is kept: reinstalling
-    /// and changing options need it.
+    /// The archive each installed mod's install in effect came from: the top of its installs. The ones under it,
+    /// versions it was updated from, are not needed again; their installs' backups undo them.
+    /// </summary>
+    public HashSet<string> ArchivesInEffect() =>
+        History().GroupBy(ModIdentity.KeyOfTx, StringComparer.OrdinalIgnoreCase).Select(g => g.Last().ZipName)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Sends an archive in the MOD folder to the Recycle Bin. The one an installed mod is in effect from is kept:
+    /// reinstalling and changing options need it.
     /// </summary>
     public void DeleteZip(string fileName)
     {
-        if (History().Any(t => t.ZipName.Equals(fileName, StringComparison.OrdinalIgnoreCase)))
+        if (ArchivesInEffect().Contains(fileName))
             throw new InvalidOperationException(L.F("설치된 버전의 파일은 삭제할 수 없습니다. 먼저 모드를 제거하거나 다른 버전으로 업데이트해 주세요.\n{0}", fileName));
         var path = Path.Combine(ArchiveDir, Path.GetFileName(fileName));
         if (!File.Exists(path)) return;
@@ -1892,9 +1907,9 @@ public sealed partial class Manager
     public bool RegisterInstalled(Dictionary<string, ModMeta> meta)
     {
         bool changed = false;
-        foreach (var tx in History())
+        foreach (var zipName in ArchivesInEffect())
         {
-            if (!meta.TryGetValue(tx.ZipName, out var note)) meta[tx.ZipName] = note = new ModMeta();
+            if (!meta.TryGetValue(zipName, out var note)) meta[zipName] = note = new ModMeta();
             if (!note.Registered)
             {
                 note.Registered = true;

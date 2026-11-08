@@ -1042,6 +1042,21 @@ public sealed class DarkListView : ListView
 
     static Rectangle Inset(Rectangle r) => new(r.Left + 6, r.Top, Math.Max(0, r.Width - 10), r.Height);
 
+    /// <summary>Every column's width, the fill column's included, to be given back by <see cref="SetColumnWidths"/>.</summary>
+    public int[] ColumnWidths => Columns.Cast<ColumnHeader>().Select(c => c.Width).ToArray();
+
+    /// <summary>
+    /// Widths kept from before. The fill column still takes what the others leave; widths for another set of
+    /// columns, as from an older version, are ignored.
+    /// </summary>
+    public void SetColumnWidths(int[]? widths)
+    {
+        if (widths == null || widths.Length != Columns.Count) return;
+        for (int i = 0; i < widths.Length; i++)
+            if (i != fillColumn && widths[i] > 0) Columns[i].Width = Math.Clamp(widths[i], 24, 1200);
+        FitColumns();
+    }
+
     /// <summary>Gives the fill column whatever width the others leave within the visible area.</summary>
     public void FitColumns()
     {
