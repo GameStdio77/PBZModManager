@@ -2,7 +2,7 @@
 
 **[한국어](#한국어) · [English](#english) · [简体中文](#简体中文) · [日本語](#日本語)**
 
-Phantom Blade Zero (Steam) · Windows · GPL-3.0 · Developed with [Claude](https://claude.com/claude-code) (Anthropic)
+Phantom Blade Zero (Steam) · Windows · GPL-3.0 · Developed with [Claude](https://claude.com/claude-code) (Anthropic) & [Gemini](https://gemini.google.com/) (Google)
 
 ---
 
@@ -72,7 +72,7 @@ Phantom Blade Zero(팬텀 블레이드 제로)용 모드 매니저입니다. 받
 
 ### 크레딧
 
-- 이 프로그램은 Anthropic의 AI [Claude](https://claude.com/claude-code)(Claude Code)를 이용해 개발했습니다.
+- 이 프로그램은 Anthropic의 AI [Claude](https://claude.com/claude-code)(Claude Code) 및 Google의 AI [Gemini](https://gemini.google.com/)를 이용해 개발했습니다.
 - rar·7z 읽기: [SharpCompress](https://github.com/adamhathcock/sharpcompress) (MIT)
 - 라이선스: [GNU General Public License v3.0](LICENSE)
 
@@ -144,7 +144,7 @@ Installing and removing are blocked while the game runs. The language is picked 
 
 ### Credits
 
-- Developed with Anthropic's AI [Claude](https://claude.com/claude-code) (Claude Code).
+- Developed with Anthropic's AI [Claude](https://claude.com/claude-code) (Claude Code) and Google's AI [Gemini](https://gemini.google.com/).
 - rar and 7z reading: [SharpCompress](https://github.com/adamhathcock/sharpcompress) (MIT)
 - License: [GNU General Public License v3.0](LICENSE)
 
@@ -216,7 +216,7 @@ Phantom Blade Zero（影之刃零）的模组管理器。它会把下载的模�
 
 ### 致谢
 
-- 本程序使用 Anthropic 的 AI [Claude](https://claude.com/claude-code)（Claude Code）开发。
+- 本程序使用 Anthropic 的 AI [Claude](https://claude.com/claude-code)（Claude Code）与 Google 的 AI [Gemini](https://gemini.google.com/) 开发。
 - rar、7z 读取：[SharpCompress](https://github.com/adamhathcock/sharpcompress)（MIT）
 - 许可证：[GNU General Public License v3.0](LICENSE)
 
@@ -288,6 +288,6 @@ Phantom Blade Zero 用の Mod マネージャーです。ダウンロードし�
 
 ### クレジット
 
-- このプログラムは Anthropic の AI [Claude](https://claude.com/claude-code)（Claude Code）を使って開発しました。
+- このプログラムは Anthropic の AI [Claude](https://claude.com/claude-code)（Claude Code）および Google の AI [Gemini](https://gemini.google.com/) を使って開発しました。
 - rar・7z の読み込み：[SharpCompress](https://github.com/adamhathcock/sharpcompress)（MIT）
 - ライセンス：[GNU General Public License v3.0](LICENSE)

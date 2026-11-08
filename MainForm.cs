@@ -16,7 +16,7 @@ public sealed partial class MainForm : Form, IMessageFilter
     static string AppVersion => Application.ProductVersion.Split('+')[0];
     readonly BusyOverlay overlay;
 
-    readonly DarkListView zipList = new(0, (L.T("모드"), 230), (L.T("받은 최신"), 80), (L.T("카테고리"), 100), (L.T("실행 도구"), 130), (L.T("상태"), 170));
+    readonly DarkListView zipList = new(1, (L.T("순번"), 44), (L.T("모드"), 230), (L.T("받은 최신"), 80), (L.T("카테고리"), 100), (L.T("실행 도구"), 130), (L.T("상태"), 170));
     readonly DarkListView installedList = new(1, (L.T("순번"), 44), (L.T("모드"), 230), (L.T("버전"), 90), (L.T("메모"), 200), (L.T("설치 시각"), 120));
     readonly DarkListView fileList = new(0, (L.T("경로"), 400), (L.T("종류"), 60), (L.T("현재 상태"), 110));
     /// <summary>The JS loader mods were last placed for; a loader installed or removed changes it.</summary>
@@ -101,7 +101,7 @@ public sealed partial class MainForm : Form, IMessageFilter
         launchButton.Margin = new Padding(14, 0, 0, 0);
         tools.Controls.AddRange(new Control[] { openModButton, folderSettingsButton, languageBox, launchButton });
         header.Controls.Add(tools);
-        var tip = new ToolTip();
+        var tip = new DarkToolTip();
         tip.SetToolTip(languageBox, "Language / 언어 / 语言 / 言語");
         tip.SetToolTip(launchButton, manager.GameExe);
         // JS mods are always placed for the loader that is installed; a choice saved by older versions is dropped.
@@ -121,7 +121,7 @@ public sealed partial class MainForm : Form, IMessageFilter
             ForeColor = Theme.Info,
             Cursor = Cursors.Hand,
         };
-        new ToolTip().SetToolTip(projectLink, ProjectUrl);
+        new DarkToolTip().SetToolTip(projectLink, ProjectUrl);
         projectLink.Click += (_, _) => this.openInBrowser(ProjectUrl);
         // Docked from the last added inward: the project link stays in the corner, the update notice beside it.
         statusBar.Controls.Add(updateLink);
@@ -229,7 +229,7 @@ public sealed partial class MainForm : Form, IMessageFilter
         infoEditor.UnpinRequested += Unpin;
         unlistButton.Click += async (_, _) => { await Task.Yield(); await UnlistChosen(); };
         deleteFileButton.Click += async (_, _) => { await Task.Yield(); await DeleteChosenFile(); };
-        cleanVersionsButton.Click += async (_, _) => { await Task.Yield(); if (SelectedMod() is { } mod) await CleanOldVersions(mod); };
+        cleanVersionsButton.Click += async (_, _) => { await Task.Yield(); await OpenBatchCleanVersionsDialog(); };
         removeButton.Click += async (_, _) =>
         {
             await Task.Yield();
@@ -572,6 +572,62 @@ public sealed partial class MainForm : Form, IMessageFilter
             + L.T("\n\n남기는 파일:\n") + string.Join("\n", keep.Select(f => "  " + f));
         if (DarkDialog.Show(this, message, L.T("이전 버전 정리"), yesNo: true) != DialogResult.Yes) return;
         await DeleteFiles(old);
+    }
+
+    public static string FormatSize(long bytes) =>
+        bytes switch
+        {
+            >= 1024 * 1024 * 1024 => $"{bytes / (1024.0 * 1024 * 1024):0.##} GB",
+            >= 1024 * 1024 => $"{bytes / (1024.0 * 1024):0.#} MB",
+            >= 1024 => $"{bytes / 1024.0:0.#} KB",
+            _ => $"{bytes} B"
+        };
+
+    List<OldVersionEntry> AllOldVersions()
+    {
+        var result = new List<OldVersionEntry>();
+        foreach (var mod in mods)
+        {
+            foreach (var version in OldVersions(mod))
+            {
+                long size = 0;
+                DateTime modified = DateTime.MinValue;
+                try
+                {
+                    var fi = new FileInfo(version.Path);
+                    if (fi.Exists)
+                    {
+                        size = fi.Length;
+                        modified = fi.LastWriteTime;
+                    }
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+                result.Add(new OldVersionEntry(mod, version, size, modified));
+            }
+        }
+        return result;
+    }
+
+    async Task OpenBatchCleanVersionsDialog(ModGroup? initialModFilter = null)
+    {
+        var allOld = AllOldVersions();
+        if (allOld.Count == 0)
+        {
+            DarkDialog.Show(this, L.T("정리할 수 있는 이전 버전 파일이 없습니다."), L.T("이전 버전 일괄 정리"));
+            return;
+        }
+
+        using var dialog = new CleanVersionsDialog(allOld, initialModFilter, openInExplorer: ShowInExplorer);
+        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+
+        var toDelete = dialog.SelectedEntries.Select(e => e.Version).ToList();
+        if (toDelete.Count == 0) return;
+
+        long totalSize = dialog.SelectedEntries.Sum(e => e.Size);
+        var confirmMsg = L.F("선택한 이전 버전 파일 {0}개({1})를 휴지통으로 보낼까요?\n\n모드 정보(카테고리·주소·메모)는 남겨 둡니다.", toDelete.Count, FormatSize(totalSize));
+        if (DarkDialog.Show(this, confirmMsg, L.T("이전 버전 일괄 정리"), yesNo: true) != DialogResult.Yes) return;
+
+        await DeleteFiles(toDelete);
     }
 
     async Task DeleteFiles(IReadOnlyList<ModVersion> versions)
@@ -1148,7 +1204,7 @@ public sealed partial class MainForm : Form, IMessageFilter
         var found = await Task.Run(() => CheckForAppUpdate(AppVersion));
         if (found is not { } update || IsDisposed) return;
         updateLink.Text = L.F("새 버전 v{0} 있음", update.Version);
-        new ToolTip().SetToolTip(updateLink, update.Url);
+        new DarkToolTip().SetToolTip(updateLink, update.Url);
         updateLink.Click += (_, _) => openInBrowser(update.Url);
         updateLink.Visible = true;
     }
@@ -1730,10 +1786,13 @@ public sealed partial class MainForm : Form, IMessageFilter
         selectRowAfterRefresh = null;
         var filter = filterBox.SelectedItem as string ?? Manager.AllCategories;
 
-        int Rank(string category)
+        string GroupSortName(List<ListEntry> g)
         {
-            var index = categories.FindIndex(c => c.Equals(category, StringComparison.OrdinalIgnoreCase));
-            return index >= 0 ? index : int.MaxValue;
+            var pageTitle = g.Select(x => x.Mod).OfType<ModGroup>().Select(PageTitleOf).FirstOrDefault(n => n.Length > 0);
+            if (!string.IsNullOrEmpty(pageTitle)) return pageTitle;
+            var modShown = g.Select(x => x.Mod).OfType<ModGroup>().Select(m => m.Shown).FirstOrDefault(n => n.Length > 0);
+            if (!string.IsNullOrEmpty(modShown)) return modShown;
+            return g[0].Name;
         }
 
         // Mods from one Nexus page stay together: a page with several files gets a heading line, its files
@@ -1746,20 +1805,38 @@ public sealed partial class MainForm : Form, IMessageFilter
             .GroupBy(x => x.Page, StringComparer.OrdinalIgnoreCase)
             // The page's main file first, so a tree hangs the others under it.
             .Select(g => g.OrderBy(x => x.Mod != null && FileCategoryOf(x.Mod) == "MAIN" ? 0 : 1).ThenBy(x => x.Name, StringComparer.OrdinalIgnoreCase).ToList())
-            .OrderBy(g => Rank(g[0].Category))
-            .ThenBy(g => g[0].Name, StringComparer.OrdinalIgnoreCase);
+            // 1순위: 1개라도 설치되어 있으면 상단에 모아두기 (설치됨: 0, 미설치: 1)
+            .OrderBy(g => g.Any(x => x.Mod?.InstalledFile != null) ? 0 : 1)
+            // 2순위: 넥서스에서 받아온 모드 이름 순서로 정렬
+            .ThenBy(g => GroupSortName(g), StringComparer.CurrentCultureIgnoreCase);
 
-        var rows = groups.SelectMany(g =>
+        var groupList = groups.ToList();
+        int lastInstalledGroupIndex = groupList.FindLastIndex(g => g.Any(x => x.Mod?.InstalledFile != null));
+        bool hasUninstalled = groupList.Any(g => !g.Any(x => x.Mod?.InstalledFile != null));
+
+        int number = 0;
+        var rows = new List<ListRow>();
+        for (int gi = 0; gi < groupList.Count; gi++)
         {
+            var g = groupList[gi];
             var names = g.Select(x => x.Name).ToList();
             var tree = g.All(x => x.Mod != null) && IsTree(g.Select(x => x.Mod!).ToList());
             string NameOf(ListEntry x, int index) => g.Count == 1 ? x.Name
                 : tree ? (index == 0 ? x.Name : "   └ " + x.Name)
                 : "      " + NameUnderHeading(x.Name, names);
             var pageTitle = g.Select(x => x.Mod).OfType<ModGroup>().Select(PageTitleOf).FirstOrDefault(n => n.Length > 0) ?? "";
-            return (g.Count > 1 && !tree ? new[] { PageHeadingRow(names, g[0].Page, g[0].Category, pageTitle) } : Array.Empty<ListRow>())
-                .Concat(g.Select((x, index) => x.Place is { } place ? PlaceRow(place, NameOf(x, index), x.Category) : ModRow(x.Mod!, NameOf(x, index), x.Category)));
-        }).ToList();
+
+            var groupRows = (g.Count > 1 && !tree ? new[] { PageHeadingRow(names, g[0].Page, g[0].Category, pageTitle) } : Array.Empty<ListRow>())
+                .Concat(g.Select((x, index) => x.Place is { } place ? PlaceRow(++number, place, NameOf(x, index), x.Category) : ModRow(++number, x.Mod!, NameOf(x, index), x.Category)))
+                .ToList();
+
+            rows.AddRange(groupRows);
+
+            if (gi == lastInstalledGroupIndex && hasUninstalled)
+            {
+                rows.Add(new ListRow(new string[zipList.Columns.Count], "__separator__", IsSeparator: true));
+            }
+        }
 
         zipList.SetRows(rows);
         zipList.KeepSelection(i => RowKey(i.Tag) == selectedKey);
@@ -1788,7 +1865,7 @@ public sealed partial class MainForm : Form, IMessageFilter
         if (installedList.Items.Count == 0) fileList.SetRows(Array.Empty<ListRow>());
     }
 
-    ListRow ModRow(ModGroup mod, string name, string category)
+    ListRow ModRow(int number, ModGroup mod, string name, string category)
     {
         var status = mod.InstalledFile == null ? L.T("미설치")
             : mod.UpdateAvailable ? L.T("업데이트 가능") + Change(mod.InstalledVersion, mod.Latest.Version)
@@ -1800,16 +1877,16 @@ public sealed partial class MainForm : Form, IMessageFilter
         var missing = mod.Versions.All(v => v.Missing) ? L.T("파일 없음") : mod.Versions.Any(v => v.Missing) ? L.T("일부 파일 없음") : null;
         if (missing != null) status = $"{missing} · {status}";
         var shownVersion = mod.Latest.Version.Length > 0 ? mod.Latest.Version : LocalVersionOf(mod) is { Length: > 0 } known ? $"({known})" : "";
-        return new ListRow(new[] { name, shownVersion, category, ToolOf(mod.Latest), status },
+        return new ListRow(new[] { number.ToString(), name, shownVersion, category, ToolOf(mod.Latest), status },
             mod, missing != null ? Theme.Danger : newer != null ? Theme.Warning : mod.UpdateAvailable ? Theme.Info : null);
     }
 
     /// <summary>A place held by an address: it says which version to get, the pinned one or the newest.</summary>
-    static ListRow PlaceRow(WantedMod place, string name, string category)
+    static ListRow PlaceRow(int number, WantedMod place, string name, string category)
     {
         var pinned = place.Pinned && place.Version.Length > 0;
         var status = pinned ? L.F("받기 전 · {0} 고정", place.Version) : L.T("받기 전 · 최신 버전 받기");
-        return new ListRow(new[] { name, place.Version, category, "", status }, new WantedRow(place), pinned ? Theme.Warning : Theme.Dim);
+        return new ListRow(new[] { number.ToString(), name, place.Version, category, "", status }, new WantedRow(place), pinned ? Theme.Warning : Theme.Dim);
     }
 
     ModGroup? GroupOf(InstalledMod mod) => mods.FirstOrDefault(m => m.Key.Equals(mod.Key, StringComparison.OrdinalIgnoreCase));
@@ -1906,7 +1983,7 @@ public sealed partial class MainForm : Form, IMessageFilter
     {
         var shared = pageTitle.Length > 0 ? pageTitle : SharedName(names);
         var from = L.F("파일 {0}개", names.Count);
-        return new ListRow(new[] { shared.Length > 0 ? shared : from, "", category, "", shared.Length > 0 ? from : "" }, new PageHeading(page), Theme.Info);
+        return new ListRow(new[] { "", shared.Length > 0 ? shared : from, "", category, "", shared.Length > 0 ? from : "" }, new PageHeading(page), Theme.Info);
     }
 
     /// <summary>The place picked in the mod list, when that is what is picked.</summary>
@@ -2188,7 +2265,10 @@ public sealed partial class MainForm : Form, IMessageFilter
         if (installButton.Text != label) installButton.Text = label;
         SetEnabled(unlistButton, (version != null && !IsInstalledFile(version.FileName)) || SelectedWanted() != null);
         SetEnabled(deleteFileButton, version is { Missing: false } && !IsInstalledFile(version.FileName));
-        SetEnabled(cleanVersionsButton, mod != null && OldVersions(mod).Count > 0);
+        var allOldCount = mods.Sum(m => OldVersions(m).Count);
+        SetEnabled(cleanVersionsButton, allOldCount > 0);
+        var cleanLabel = allOldCount > 0 ? L.F("이전 버전 정리 ({0})...", allOldCount) : L.T("이전 버전 정리...");
+        if (cleanVersionsButton.Text != cleanLabel) cleanVersionsButton.Text = cleanLabel;
 
         var row = SelectedRow();
         var selected = row?.Mod;
@@ -2445,3 +2525,295 @@ public sealed record PageHeading(string Page);
 
 /// <summary>A place held by an address in the mod list.</summary>
 public sealed record WantedRow(WantedMod Mod);
+
+/// <summary>An older version archive that can be cleaned up, with its file size and last modified date.</summary>
+public sealed record OldVersionEntry(ModGroup Mod, ModVersion Version, long Size, DateTime Modified);
+public sealed record OldVersionGroupHeader(ModGroup Mod, int FileCount, long TotalSize, List<OldVersionEntry> Entries);
+
+/// <summary>A dialog to view and clean up older version archives of all mods at once.</summary>
+public sealed class CleanVersionsDialog : Form
+{
+    const string On = "■", Off = "□", Some = "▣";
+
+    readonly List<OldVersionEntry> allEntries;
+    readonly HashSet<string> checkedFileNames = new(StringComparer.OrdinalIgnoreCase);
+    readonly DarkListView list = new(1,
+        ("", 30),
+        (L.T("모드 / 파일명"), 310),
+        (L.T("현재 상태"), 115),
+        (L.T("최신 버전"), 85),
+        (L.T("파일 버전"), 95),
+        (L.T("크기"), 80),
+        (L.T("날짜"), 110),
+        (L.T("파일 위치"), 80));
+    readonly DarkComboBox filterBox = new(ComboBoxStyle.DropDownList) { Width = 260 };
+    readonly Label statusLabel = new() { AutoSize = true, ForeColor = Theme.Text, Margin = new Padding(12, 7, 0, 0) };
+    readonly Button confirmButton = Theme.Button(L.T("선택한 파일 휴지통으로 보내기"), primary: true);
+
+    public IReadOnlyList<OldVersionEntry> SelectedEntries =>
+        allEntries.Where(e => checkedFileNames.Contains(e.Version.FileName)).ToList();
+
+    public CleanVersionsDialog(IReadOnlyList<OldVersionEntry> entries, ModGroup? initialModFilter = null, Action<string>? openInExplorer = null)
+    {
+        allEntries = entries.ToList();
+
+        Text = L.T("이전 버전 일괄 정리");
+        Theme.Apply(this);
+        ClientSize = new Size(980, 600);
+        MinimumSize = new Size(750, 420);
+        StartPosition = FormStartPosition.CenterParent;
+        ShowInTaskbar = false;
+        MinimizeBox = false;
+
+        var note = L.T("최신 버전과 현재 게임에 설치된 버전은 보존되며, 정리 대상인 이전 버전 아카이브 파일입니다.")
+            + "\n" + L.T("라인 끝의 [파일 보기]를 클릭하면 해당 파일 위치를 엽니다.");
+        var topLabel = new Label
+        {
+            AutoSize = true,
+            Dock = DockStyle.Top,
+            Padding = new Padding(10, 10, 10, 8),
+            MaximumSize = new Size(860, 0),
+            Text = note
+        };
+
+        var tools = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, WrapContents = false, Padding = new Padding(8, 0, 8, 6) };
+        var allButton = Theme.Button(L.T("전체 선택"));
+        var noneButton = Theme.Button(L.T("전체 해제"));
+        allButton.Margin = new Padding(2, 0, 0, 0);
+        noneButton.Margin = new Padding(6, 0, 14, 0);
+
+        allButton.Click += (_, _) =>
+        {
+            foreach (var g in FilteredGroups())
+                foreach (var e in g.Entries) checkedFileNames.Add(e.Version.FileName);
+            Render();
+        };
+        noneButton.Click += (_, _) =>
+        {
+            foreach (var g in FilteredGroups())
+                foreach (var e in g.Entries) checkedFileNames.Remove(e.Version.FileName);
+            Render();
+        };
+
+        filterBox.Items.Add(L.F("모든 모드 ({0}개 파일)", allEntries.Count));
+        var modsWithOld = allEntries.GroupBy(e => e.Mod.Key).Select(g => g.First().Mod).OrderBy(m => m.Shown, StringComparer.OrdinalIgnoreCase).ToList();
+        int selectedIndex = 0;
+        for (int i = 0; i < modsWithOld.Count; i++)
+        {
+            var m = modsWithOld[i];
+            var count = allEntries.Count(e => e.Mod.Key.Equals(m.Key, StringComparison.OrdinalIgnoreCase));
+            var statusTag = m.InstalledFile != null ? $" [{L.T("설치됨")}]" : "";
+            filterBox.Items.Add($"{m.Shown}{statusTag} ({count})");
+            if (initialModFilter != null && m.Key.Equals(initialModFilter.Key, StringComparison.OrdinalIgnoreCase))
+                selectedIndex = i + 1;
+        }
+        filterBox.SelectedIndex = selectedIndex;
+        foreach (var g in FilteredGroups())
+            foreach (var e in g.Entries) checkedFileNames.Add(e.Version.FileName);
+        filterBox.SelectedIndexChanged += (_, _) => Render();
+
+        tools.Controls.Add(allButton);
+        tools.Controls.Add(noneButton);
+        tools.Controls.Add(filterBox);
+        tools.Controls.Add(statusLabel);
+
+        var frame = new Panel { Dock = DockStyle.Fill, Padding = new Padding(1), BackColor = Theme.Border };
+        frame.Controls.Add(new ScrollHost(list) { Dock = DockStyle.Fill });
+        var body = new Panel { Dock = DockStyle.Fill, Padding = new Padding(10, 0, 10, 0) };
+        body.Controls.Add(frame);
+
+        confirmButton.DialogResult = DialogResult.OK;
+        var cancelButton = Theme.Button(L.T("취소"));
+        cancelButton.DialogResult = DialogResult.Cancel;
+        var bar = new FlowLayoutPanel { Dock = DockStyle.Bottom, AutoSize = true, FlowDirection = FlowDirection.RightToLeft, Padding = new Padding(6) };
+        bar.Controls.Add(cancelButton);
+        bar.Controls.Add(confirmButton);
+        AcceptButton = confirmButton;
+        CancelButton = cancelButton;
+
+        list.MouseMove += (_, e) =>
+        {
+            int locationColIndex = list.Columns.Count - 1;
+            int lastColLeft = 0;
+            for (int i = 0; i < locationColIndex; i++) lastColLeft += list.Columns[i].Width;
+            var hit = list.HitTest(e.Location);
+            list.Cursor = (e.X >= lastColLeft && hit.Item?.Tag is OldVersionEntry) ? Cursors.Hand : Cursors.Default;
+        };
+        list.MouseLeave += (_, _) => list.Cursor = Cursors.Default;
+
+        list.MouseDown += (_, e) =>
+        {
+            if (e.Button != MouseButtons.Left) return;
+            var hit = list.HitTest(e.Location);
+            if (hit.Item == null) return;
+
+            // 1) 체크박스 컬럼(첫 번째 열) 클릭 시: 선택 토글
+            if (e.X <= list.Columns[0].Width + 4)
+            {
+                if (hit.Item.Tag is OldVersionGroupHeader group)
+                {
+                    bool anyChecked = group.Entries.Any(en => checkedFileNames.Contains(en.Version.FileName));
+                    if (anyChecked)
+                        foreach (var en in group.Entries) checkedFileNames.Remove(en.Version.FileName);
+                    else
+                        foreach (var en in group.Entries) checkedFileNames.Add(en.Version.FileName);
+                    Render();
+                }
+                else if (hit.Item.Tag is OldVersionEntry entry)
+                {
+                    if (checkedFileNames.Contains(entry.Version.FileName))
+                        checkedFileNames.Remove(entry.Version.FileName);
+                    else
+                        checkedFileNames.Add(entry.Version.FileName);
+                    Render();
+                }
+                return;
+            }
+
+            // 2) 라인 끝의 [파일 위치] 컬럼 클릭 시: 파일 보기(하위 파일 행인 경우)
+            int locationColIndex = list.Columns.Count - 1;
+            int lastColLeft = 0;
+            for (int i = 0; i < locationColIndex; i++) lastColLeft += list.Columns[i].Width;
+            int subIdx = hit.SubItem != null ? hit.Item.SubItems.IndexOf(hit.SubItem) : -1;
+
+            if (openInExplorer != null && (subIdx == locationColIndex || e.X >= lastColLeft))
+            {
+                if (hit.Item.Tag is OldVersionEntry entry && File.Exists(entry.Version.Path))
+                {
+                    openInExplorer(entry.Version.Path);
+                }
+            }
+        };
+
+        list.KeyDown += (_, e) =>
+        {
+            if (e.KeyCode == Keys.Space && list.SelectedItems.Count > 0)
+            {
+                var tag = list.SelectedItems[0].Tag;
+                if (tag is OldVersionGroupHeader group)
+                {
+                    bool anyChecked = group.Entries.Any(en => checkedFileNames.Contains(en.Version.FileName));
+                    if (anyChecked)
+                        foreach (var en in group.Entries) checkedFileNames.Remove(en.Version.FileName);
+                    else
+                        foreach (var en in group.Entries) checkedFileNames.Add(en.Version.FileName);
+                    Render();
+                    e.Handled = true;
+                }
+                else if (tag is OldVersionEntry entry)
+                {
+                    if (checkedFileNames.Contains(entry.Version.FileName))
+                        checkedFileNames.Remove(entry.Version.FileName);
+                    else
+                        checkedFileNames.Add(entry.Version.FileName);
+                    Render();
+                    e.Handled = true;
+                }
+            }
+        };
+
+        Controls.Add(body);
+        Controls.Add(tools);
+        Controls.Add(topLabel);
+        Controls.Add(bar);
+
+        Render();
+    }
+
+    static readonly IComparer<string> FileVersionComparer = Comparer<string>.Create(ModIdentity.CompareFiles);
+
+    List<OldVersionGroupHeader> FilteredGroups()
+    {
+        var groups = allEntries
+            .GroupBy(e => e.Mod.Key)
+            .Select(g => new OldVersionGroupHeader(
+                Mod: g.First().Mod,
+                FileCount: g.Count(),
+                TotalSize: g.Sum(e => e.Size),
+                Entries: g.OrderBy(e => e.Version.FileName, FileVersionComparer)
+                          .ThenBy(e => e.Modified)
+                          .ToList()
+            ));
+
+        if (filterBox.SelectedIndex <= 0)
+        {
+            // 전체 목록: 구버전 총 용량이 큰 모드부터 (모드 단위로 묶어서, 모드 내에서는 오래된 버전부터)
+            return groups
+                .OrderByDescending(g => g.TotalSize)
+                .ThenBy(g => g.Mod.Shown, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+        var modsWithOld = allEntries.GroupBy(e => e.Mod.Key).Select(g => g.First().Mod).OrderBy(m => m.Shown, StringComparer.OrdinalIgnoreCase).ToList();
+        int modIndex = filterBox.SelectedIndex - 1;
+        if (modIndex >= 0 && modIndex < modsWithOld.Count)
+        {
+            var key = modsWithOld[modIndex].Key;
+            return groups
+                .Where(g => g.Mod.Key.Equals(key, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+        }
+        return groups.ToList();
+    }
+
+    void Render()
+    {
+        var groups = FilteredGroups();
+        var rows = new List<ListRow>();
+
+        foreach (var group in groups)
+        {
+            int checkedCount = group.Entries.Count(e => checkedFileNames.Contains(e.Version.FileName));
+            string headerMark = checkedCount == 0 ? Off : (checkedCount == group.Entries.Count ? On : Some);
+
+            string stateText = group.Mod.InstalledFile != null
+                ? (group.Mod.InstalledVersion is { Length: > 0 } iv ? L.F("설치됨 ({0})", iv) : L.T("설치됨"))
+                : L.T("미설치");
+            string latestVer = group.Mod.Latest.Version.Length > 0 ? group.Mod.Latest.Version : "-";
+            string summaryText = L.F("이전 버전 {0}개", group.FileCount);
+            string groupSizeText = MainForm.FormatSize(group.TotalSize);
+
+            // 모드 그룹 헤더 행 (파란색 Theme.Info 계열로 통일, 최신 버전, 구버전 개수, 합친 용량 표시)
+            rows.Add(new ListRow(new[]
+            {
+                headerMark,
+                group.Mod.Shown,
+                stateText,
+                latestVer,
+                summaryText,
+                groupSizeText,
+                "-",
+                ""
+            }, group, Theme.Info));
+
+            // 하위 구버전 파일들 행 (컬럼 1의 맨 앞에서 파일명 바로 시작, 파일 버전 및 크기 표시)
+            foreach (var entry in group.Entries)
+            {
+                bool isChecked = checkedFileNames.Contains(entry.Version.FileName);
+                var mark = isChecked ? On : Off;
+                var fileVer = entry.Version.Version.Length > 0 ? entry.Version.Version : "-";
+                var sizeText = MainForm.FormatSize(entry.Size);
+                var dateText = entry.Modified > DateTime.MinValue ? entry.Modified.ToString("yyyy-MM-dd HH:mm") : "-";
+
+                rows.Add(new ListRow(new[]
+                {
+                    mark,
+                    $"   └ {entry.Version.FileName}",
+                    "-",
+                    "-",
+                    fileVer,
+                    sizeText,
+                    dateText,
+                    $"[{L.T("파일 보기")}]"
+                }, entry, isChecked ? null : Theme.Muted));
+            }
+        }
+
+        list.SetRows(rows);
+
+        var selected = SelectedEntries;
+        long selectedBytes = selected.Sum(s => s.Size);
+        statusLabel.Text = L.F("선택됨: {0}개 ({1})", selected.Count, MainForm.FormatSize(selectedBytes));
+        confirmButton.Enabled = selected.Count > 0;
+    }
+}

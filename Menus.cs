@@ -50,7 +50,7 @@ public sealed partial class MainForm
 
     static ToolStripMenuItem Item(string text, bool enabled, Func<Task> act)
     {
-        var item = new ToolStripMenuItem(text) { Enabled = enabled };
+        var item = new ToolStripMenuItem(DarkButton.FormatText(text)) { Enabled = enabled };
         // After the menu has closed, so a dialog the action opens comes up over the window.
         item.Click += async (_, _) => { await Task.Yield(); await act(); };
         return item;
@@ -98,11 +98,15 @@ public sealed partial class MainForm
             items.Add(null);
             items.Add(Item(L.T("압축 파일 위치 열기"), !shown.Missing, () => ShowInExplorer(shown.Path)));
             items.Add(Item(L.T("설치된 모드에서 찾기"), mod.InstalledFile != null, () => FindInstalled(mod.Key)));
+            if (OldVersions(mod).Count > 0)
+            {
+                items.Add(null);
+                items.Add(Item(L.T("이 모드의 이전 버전 정리..."), true, () => OpenBatchCleanVersionsDialog(mod)));
+            }
         }
         items.Add(null);
         items.Add(Press(unlistButton));
         items.Add(Press(deleteFileButton));
-        items.Add(Press(cleanVersionsButton));
         return items;
     }
 

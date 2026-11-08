@@ -48,6 +48,7 @@ public sealed class ModInfoEditor : TableLayoutPanel
     // Waits for typing to stop, so Nexus is asked about a finished address and not about every keystroke.
     readonly System.Windows.Forms.Timer addressPause = new() { Interval = 700 };
     bool loading;
+    bool isPageMode;
     readonly bool addressFirst;
 
     /// <summary>The user changed a field. Loading values through <see cref="Show"/> does not raise this.</summary>
@@ -96,13 +97,20 @@ public sealed class ModInfoEditor : TableLayoutPanel
         SetColumnSpan(title, 2);
         row++;
 
-        versionBox.Dock = DockStyle.Fill;
-        versionRow = Row(versionBox, downloadButton);
+        var unpinSpacer = new Panel { Dock = DockStyle.Right, Width = 6, Visible = false };
         unpinButton.Dock = DockStyle.Right;
         unpinButton.Visible = false;
         unpinButton.Click += (_, _) => UnpinRequested?.Invoke();
+        unpinButton.VisibleChanged += (_, _) => unpinSpacer.Visible = unpinButton.Visible;
+
+        versionBox.Dock = DockStyle.Fill;
+        versionRow = new Panel { Dock = DockStyle.Fill, Height = Theme.ControlHeight, Margin = new Padding(0, 3, 0, 3) };
+        versionRow.Controls.Add(versionBox);
         versionRow.Controls.Add(new Panel { Dock = DockStyle.Right, Width = 6 });
         versionRow.Controls.Add(unpinButton);
+        versionRow.Controls.Add(unpinSpacer);
+        downloadButton.Dock = DockStyle.Right;
+        versionRow.Controls.Add(downloadButton);
         versionLabel.Visible = versionRow.Visible = false;
         downloadButton.Click += (_, _) => DownloadRequested?.Invoke();
         void AddVersion()
@@ -132,7 +140,7 @@ public sealed class ModInfoEditor : TableLayoutPanel
                 ForeColor = Theme.Info,
                 Margin = new Padding(0, 0, 0, 8),
             };
-            new ToolTip().SetToolTip(hint, hint.Text);
+            new DarkToolTip().SetToolTip(hint, hint.Text);
             Controls.Add(hint, 1, row);
             row++;
         }
@@ -261,7 +269,7 @@ public sealed class ModInfoEditor : TableLayoutPanel
         var heights = GetRowHeights();
         if (heights.Length < RowCount) return;
         int above = heights.Take(RowCount - 1).Sum() + Padding.Vertical;
-        bool fits = ClientSize.Height - above >= NotesMinHeight;
+        bool fits = isPageMode && (ClientSize.Height - above >= NotesMinHeight);
         if (notesField.Visible != fits) notesField.Visible = fits;
         var label = fits ? L.T("크게 보기...") : L.T("설치 방법 보기...");
         if (showNotesButton.Text != label) showNotesButton.Text = label;
@@ -320,6 +328,7 @@ public sealed class ModInfoEditor : TableLayoutPanel
     /// <param name="keepDownload">The download button stays, without the version list.</param>
     public void SetPageMode(bool page, bool keepMemo = false, bool keepDownload = false)
     {
+        isPageMode = page;
         void Show(Control c, bool visible) { if (c.Visible != visible) c.Visible = visible; }
         Show(versionLabel, !page);
         Show(versionBox, !page);
@@ -337,6 +346,7 @@ public sealed class ModInfoEditor : TableLayoutPanel
         if (page) pictureCount = documentCount = 0;
         if (page) ShowContents();
         if (page) downloadButton.Enabled = true;
+        PerformLayout();
     }
 
     /// <summary>Shows the pin of a version a shared list asked for, with the button that lifts it; empty hides both.</summary>

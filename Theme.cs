@@ -437,7 +437,7 @@ public sealed class DarkButton : Button
     public DarkButton(string text, bool primary)
     {
         this.primary = primary;
-        Text = text;
+        Text = FormatText(text);
         AutoSize = true;
         AutoSizeMode = AutoSizeMode.GrowAndShrink;
         MinimumSize = new Size(0, Theme.ControlHeight);
@@ -445,6 +445,15 @@ public sealed class DarkButton : Button
         Margin = new Padding(0, 0, 6, 0);
         UseVisualStyleBackColor = false;
         SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+    }
+
+    public static string FormatText(string text) => text;
+
+    [System.Diagnostics.CodeAnalysis.AllowNull]
+    public override string Text
+    {
+        get => base.Text;
+        set => base.Text = FormatText(value ?? "");
     }
 
     protected override void OnPaint(PaintEventArgs e)
@@ -944,7 +953,57 @@ public sealed class DarkScrollBar : Control
     static extern IntPtr SendMessage(IntPtr hwnd, int message, IntPtr wParam, ref Point lParam);
 }
 
-public sealed record ListRow(string[] Cells, object Tag, Color? Color = null);
+public sealed record ListRow(string[] Cells, object Tag, Color? Color = null, bool DividerBelow = false, bool IsSeparator = false);
+
+/// <summary>A tooltip drawn in the dark palette with custom borders, padding and font.</summary>
+public sealed class DarkToolTip : ToolTip
+{
+    string? lastShownText;
+
+    public DarkToolTip()
+    {
+        OwnerDraw = true;
+        ShowAlways = true;
+        BackColor = Theme.Raised;
+        ForeColor = Theme.Text;
+
+        Popup += (_, e) =>
+        {
+            var text = lastShownText ?? (e.AssociatedControl != null ? GetToolTip(e.AssociatedControl) : "");
+            lastShownText = null;
+            if (string.IsNullOrEmpty(text)) return;
+            var font = Theme.BaseFont;
+            var measured = TextRenderer.MeasureText(text, font, Size.Empty,
+                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
+            e.ToolTipSize = new Size(measured.Width + 16, Math.Max(Theme.ControlHeight - 6, measured.Height + 8));
+        };
+
+        Draw += (_, e) =>
+        {
+            using (var bg = new SolidBrush(Theme.Raised))
+                e.Graphics.FillRectangle(bg, e.Bounds);
+
+            using (var border = new Pen(Theme.Border))
+                e.Graphics.DrawRectangle(border, 0, 0, e.Bounds.Width - 1, e.Bounds.Height - 1);
+
+            var textRect = new Rectangle(8, 0, e.Bounds.Width - 16, e.Bounds.Height);
+            TextRenderer.DrawText(e.Graphics, e.ToolTipText, Theme.BaseFont, textRect, Theme.Text,
+                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
+        };
+    }
+
+    public new void Show(string text, IWin32Window window, int x, int y, int duration)
+    {
+        lastShownText = text;
+        base.Show(text, window, x, y, duration);
+    }
+
+    public new void Show(string text, IWin32Window window, int x, int y)
+    {
+        lastShownText = text;
+        base.Show(text, window, x, y);
+    }
+}
 
 /// <summary>A details list drawn in the dark palette, with one column taking up the spare width.</summary>
 public sealed class DarkListView : ListView
@@ -954,6 +1013,8 @@ public sealed class DarkListView : ListView
     const int LvmGetHeader = 0x101F;
 
     readonly int fillColumn;
+    readonly HashSet<ListViewItem> dividerBelowItems = new();
+    readonly HashSet<ListViewItem> separatorItems = new();
 
     public DarkListView(int fillColumn, params (string Title, int Width)[] columns)
     {
@@ -981,11 +1042,127 @@ public sealed class DarkListView : ListView
         DrawItem += (_, e) => e.DrawDefault = false;
         DrawSubItem += (_, e) =>
         {
+            if (e.Item != null && separatorItems.Contains(e.Item))
+            {
+                using var sepFill = new SolidBrush(Theme.Surface);
+                e.Graphics.FillRectangle(sepFill, e.Bounds);
+                int y = e.Bounds.Top + e.Bounds.Height / 2;
+                using var linePen = new Pen(Theme.Border);
+                e.Graphics.DrawLine(linePen, e.Bounds.Left, y, e.Bounds.Right, y);
+                return;
+            }
+
             bool selected = e.Item?.Selected == true;
             using var fill = new SolidBrush(selected ? Theme.Selection : Theme.Surface);
             e.Graphics.FillRectangle(fill, e.Bounds);
             var color = selected ? Color.White : e.Item?.ForeColor ?? Theme.Text;
             TextRenderer.DrawText(e.Graphics, e.SubItem?.Text, Font, Inset(e.Bounds), color, CellFlags);
+            if (e.Item != null && dividerBelowItems.Contains(e.Item))
+            {
+                using var linePen = new Pen(Theme.Border);
+                e.Graphics.DrawLine(linePen, e.Bounds.Left, e.Bounds.Bottom - 1, e.Bounds.Right, e.Bounds.Bottom - 1);
+            }
+        };
+
+        ItemSelectionChanged += (_, e) =>
+        {
+            if (e.IsSelected && e.Item != null && separatorItems.Contains(e.Item))
+            {
+                e.Item.Selected = false;
+            }
+        };
+        MouseDown += (_, e) =>
+        {
+            var hit = HitTest(e.Location);
+            if (hit.Item != null && separatorItems.Contains(hit.Item))
+            {
+                hit.Item.Selected = false;
+            }
+        };
+
+        ShowItemToolTips = false;
+        var tip = new DarkToolTip();
+        var hoverTimer = new System.Windows.Forms.Timer { Interval = 200 };
+        string? pendingTip = null;
+        string? showingTip = null;
+        Point lastHoverPos = Point.Empty;
+
+        hoverTimer.Tick += (_, _) =>
+        {
+            hoverTimer.Stop();
+            if (!string.IsNullOrEmpty(pendingTip))
+            {
+                showingTip = pendingTip;
+                tip.Show(showingTip, this, lastHoverPos.X + 8, lastHoverPos.Y + 22, 6000);
+            }
+        };
+
+        MouseMove += (_, e) =>
+        {
+            var hit = HitTest(e.Location);
+            string? targetTip = null;
+
+            if (hit.Item != null && !separatorItems.Contains(hit.Item))
+            {
+                int x = e.X;
+                int colLeft = 0;
+                for (int c = 0; c < Columns.Count; c++)
+                {
+                    int colWidth = Columns[c].Width;
+                    if (x >= colLeft && x < colLeft + colWidth)
+                    {
+                        if (c < hit.Item.SubItems.Count)
+                        {
+                            var text = hit.Item.SubItems[c].Text;
+                            if (!string.IsNullOrWhiteSpace(text) && text != "■" && text != "□" && text != "▣")
+                            {
+                                var measured = TextRenderer.MeasureText(text, Font, Size.Empty,
+                                    TextFormatFlags.Left | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix);
+                                if (measured.Width > colWidth - 8)
+                                {
+                                    var clean = text.Trim();
+                                    targetTip = clean.StartsWith("└ ") ? clean[2..].Trim() : clean;
+                                }
+                            }
+                        }
+                        break;
+                    }
+                    colLeft += colWidth;
+                }
+            }
+
+            if (targetTip == null)
+            {
+                hoverTimer.Stop();
+                pendingTip = null;
+                if (showingTip != null)
+                {
+                    showingTip = null;
+                    tip.Hide(this);
+                }
+            }
+            else if (targetTip != pendingTip)
+            {
+                pendingTip = targetTip;
+                lastHoverPos = e.Location;
+                hoverTimer.Stop();
+                hoverTimer.Start();
+            }
+            else
+            {
+                lastHoverPos = e.Location;
+            }
+        };
+
+        MouseLeave += (_, _) =>
+        {
+            hoverTimer.Stop();
+            pendingTip = null;
+            if (showingTip != null)
+            {
+                showingTip = null;
+                tip.Hide(this);
+            }
         };
     }
 
@@ -1003,7 +1180,9 @@ public sealed class DarkListView : ListView
             var item = Items[i];
             same = item.SubItems.Count == rows[i].Cells.Length
                 && item.ForeColor == (rows[i].Color ?? ForeColor)
-                && rows[i].Cells.Select((cell, c) => item.SubItems[c].Text == cell).All(equal => equal);
+                && rows[i].Cells.Select((cell, c) => item.SubItems[c].Text == cell).All(equal => equal)
+                && (dividerBelowItems.Contains(item) == rows[i].DividerBelow)
+                && (separatorItems.Contains(item) == rows[i].IsSeparator);
         }
         if (same)
         {
@@ -1011,23 +1190,45 @@ public sealed class DarkListView : ListView
             return;
         }
 
+        int topIndex = 0;
+        try { if (IsHandleCreated && Items.Count > 0 && TopItem != null) topIndex = TopItem.Index; }
+        catch { }
+
+        dividerBelowItems.Clear();
+        separatorItems.Clear();
         BeginUpdate();
         Items.Clear();
         foreach (var row in rows)
         {
             var item = new ListViewItem(row.Cells) { Tag = row.Tag };
             if (row.Color is { } color) item.ForeColor = color;
+            if (row.DividerBelow) dividerBelowItems.Add(item);
+            if (row.IsSeparator) separatorItems.Add(item);
             Items.Add(item);
         }
         EndUpdate();
+
+        if (IsHandleCreated && Items.Count > 0 && topIndex > 0)
+        {
+            try { TopItem = Items[Math.Min(topIndex, Items.Count - 1)]; }
+            catch { }
+        }
         FitColumns();
     }
 
     /// <summary>Keeps the row matching <paramref name="wanted"/> selected, or the first row if none does.</summary>
-    public void KeepSelection(Func<ListViewItem, bool> wanted)
+    public void KeepSelection(Func<ListViewItem, bool> wanted, bool ensureVisible = true)
     {
-        var target = Items.Cast<ListViewItem>().FirstOrDefault(wanted) ?? Items.Cast<ListViewItem>().FirstOrDefault();
-        if (target is { Selected: false }) target.Selected = true;
+        var validItems = Items.Cast<ListViewItem>().Where(i => !separatorItems.Contains(i));
+        var target = validItems.FirstOrDefault(wanted) ?? validItems.FirstOrDefault();
+        if (target != null)
+        {
+            if (!target.Selected) target.Selected = true;
+            if (ensureVisible)
+            {
+                try { target.EnsureVisible(); } catch { }
+            }
+        }
     }
 
     public int HeaderHeight
