@@ -239,7 +239,6 @@ public sealed partial class MainForm : Form, IMessageFilter
                 await Run(L.T("모드 파일 옮기는 중..."), p => manager.MoveArchivesIn(p));
             await RefreshAll();
             _ = LookForAppUpdate();
-            if (manager.AutoCheckUpdatesOnStart) _ = CheckLatest(silent: true);
             await OfferRecovery();
             if (filesToAdd.Length > 0) await AddZips(filesToAdd);
         };
@@ -1039,7 +1038,7 @@ public sealed partial class MainForm : Form, IMessageFilter
     /// Asks Nexus, and GitHub for mods kept there, about the listed mods, or only the ones given. Mods the user
     /// keeps out of checks are left alone. Only ever runs at the user's asking.
     /// </summary>
-    async Task CheckLatest(IReadOnlyCollection<ModGroup>? only = null, bool silent = false)
+    async Task CheckLatest(IReadOnlyCollection<ModGroup>? only = null)
     {
         var pool = (only ?? mods).Where(m => !IgnoresUpdates(m)).ToList();
         var asked = pool.Select(m => m.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -1053,7 +1052,6 @@ public sealed partial class MainForm : Form, IMessageFilter
         var unknown = pool.Where(m => targets.All(t => t.Key != m.Key) && onGitHub.All(g => g.Key != m.Key)).Select(m => m.Name).ToList();
         if (targets.Count == 0 && onGitHub.Count == 0)
         {
-            if (silent) return;
             // Nothing has an address any more, so no old result still applies.
             if (pool.Count(m => remote.Remove(m.Key)) > 0)
             {
@@ -1065,64 +1063,33 @@ public sealed partial class MainForm : Form, IMessageFilter
         }
 
         var unreachable = new List<string>();
-        Dictionary<string, RemoteInfo>? found = null;
-        if (silent)
+        Dictionary<string, RemoteInfo>? found = await Run(L.T("최신 버전 확인 중..."), report =>
         {
-            found = await Task.Run(() =>
+            var results = new Dictionary<string, RemoteInfo>(StringComparer.OrdinalIgnoreCase);
+            try
             {
-                var results = new Dictionary<string, RemoteInfo>(StringComparer.OrdinalIgnoreCase);
+                if (targets.Count > 0)
+                    foreach (var pair in NexusApi.Check(targets)) results[pair.Key] = pair.Value;
+            }
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+            {
+                throw new InvalidOperationException(L.T("Nexus에 연결하지 못했습니다. 인터넷 연결을 확인한 뒤 다시 시도해 주세요."), ex);
+            }
+            foreach (var (key, name, repo, zip) in onGitHub)
+            {
+                report(L.F("GitHub에서 {0} 확인 중...", name));
                 try
                 {
-                    if (targets.Count > 0)
-                        foreach (var pair in NexusApi.Check(targets)) results[pair.Key] = pair.Value;
+                    if (GitHubApi.Check(repo, zip) is { } info) results[key] = info;
                 }
-                catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+                catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or InvalidOperationException or System.Text.Json.JsonException or IOException)
                 {
+                    // One repository that cannot be read does not stop the others.
+                    unreachable.Add(name);
                 }
-                foreach (var (key, name, repo, zip) in onGitHub)
-                {
-                    try
-                    {
-                        if (GitHubApi.Check(repo, zip) is { } info) results[key] = info;
-                    }
-                    catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or InvalidOperationException or System.Text.Json.JsonException or IOException)
-                    {
-                        unreachable.Add(name);
-                    }
-                }
-                return results;
-            });
-        }
-        else
-        {
-            found = await Run(L.T("최신 버전 확인 중..."), report =>
-            {
-                var results = new Dictionary<string, RemoteInfo>(StringComparer.OrdinalIgnoreCase);
-                try
-                {
-                    if (targets.Count > 0)
-                        foreach (var pair in NexusApi.Check(targets)) results[pair.Key] = pair.Value;
-                }
-                catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
-                {
-                    throw new InvalidOperationException(L.T("Nexus에 연결하지 못했습니다. 인터넷 연결을 확인한 뒤 다시 시도해 주세요."), ex);
-                }
-                foreach (var (key, name, repo, zip) in onGitHub)
-                {
-                    report(L.F("GitHub에서 {0} 확인 중...", name));
-                    try
-                    {
-                        if (GitHubApi.Check(repo, zip) is { } info) results[key] = info;
-                    }
-                    catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or InvalidOperationException or System.Text.Json.JsonException or IOException)
-                    {
-                        // One repository that cannot be read does not stop the others.
-                        unreachable.Add(name);
-                    }
-                }
-                return results;
-            });
-        }
+            }
+            return results;
+        });
         if (found == null) return;
 
         // A listed mod this check gave nothing for, with no address or one the source does not know, keeps no old result.
@@ -1189,7 +1156,6 @@ public sealed partial class MainForm : Form, IMessageFilter
         if (unreachable.Count > 0) lines.Add(L.F("GitHub에 연결하지 못함 (잠시 후 다시 시도해 주세요): {0}", string.Join(", ", unreachable)));
         if (missing.Count > 0) lines.Add(L.F("확인하지 못함 (모드 정보의 주소를 확인해 주세요): {0}", string.Join(", ", missing)));
         SetStatus(newer.Count > 0 ? L.F("새 버전 {0}개 있음", newer.Count) : L.T("최신 버전 확인 완료"));
-        if (silent) return;
         if (newer.Count == 0)
         {
             DarkDialog.Show(this, string.Join("\n\n", lines), L.T("최신 버전 확인"));

@@ -367,7 +367,7 @@ public sealed class PresetEditor : Form
         across.Controls.Add(take);
         body.Controls.Add(across, 1, 0);
         var arrange = new FlowLayoutPanel { Dock = DockStyle.Bottom, AutoSize = true, WrapContents = false, Padding = new Padding(0, 6, 0, 0) };
-        foreach (var b in new[] { Button(L.T("위로"), () => Move(-1)), Button(L.T("아래로"), () => Move(1)), Button(L.T("구분선 추가..."), AddSeparator), Button(L.T("구분선 이름 바꾸기..."), RenameSeparator) })
+        foreach (var b in new[] { Button(L.T("위로"), () => MoveLines(-1)), Button(L.T("아래로"), () => MoveLines(1)), Button(L.T("구분선 추가..."), AddSeparator), Button(L.T("구분선 이름 바꾸기..."), RenameSeparator) })
         {
             b.Margin = new Padding(0, 0, 6, 0);
             arrange.Controls.Add(b);
@@ -486,7 +486,7 @@ public sealed class PresetEditor : Form
     }
 
     /// <summary>Moves the lines picked on the right up (negative) or down together.</summary>
-    public void Move(int delta)
+    public void MoveLines(int delta)
     {
         var picked = right.SelectedItems.Cast<ListViewItem>().Select(i => i.Tag).OfType<PresetLine>().ToList();
         if (picked.Count == 0) return;

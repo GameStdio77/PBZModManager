@@ -1233,7 +1233,6 @@ public sealed partial class Manager
         public bool ShowRowNumbers { get; set; } = true;
         public string SeparatorFormat { get; set; } = "── {0} ──";
         public GameLaunchBehavior LaunchBehavior { get; set; } = GameLaunchBehavior.KeepOpen;
-        public bool AutoCheckUpdatesOnStart { get; set; } = false;
     }
 
     Settings settings;
@@ -1275,7 +1274,6 @@ public sealed partial class Manager
     public bool ShowRowNumbers => settings.ShowRowNumbers;
     public string SeparatorFormat => string.IsNullOrWhiteSpace(settings.SeparatorFormat) ? "── {0} ──" : settings.SeparatorFormat;
     public GameLaunchBehavior LaunchBehavior => settings.LaunchBehavior;
-    public bool AutoCheckUpdatesOnStart => settings.AutoCheckUpdatesOnStart;
 
     public static string FormatSeparator(string text, string? fmt = null)
     {
@@ -1287,12 +1285,11 @@ public sealed partial class Manager
 
     public string FormatSeparator(string text) => FormatSeparator(text, SeparatorFormat);
 
-    public void SavePreferences(bool showRowNumbers, string separatorFormat, GameLaunchBehavior launchBehavior, bool autoCheckUpdates)
+    public void SavePreferences(bool showRowNumbers, string separatorFormat, GameLaunchBehavior launchBehavior)
     {
         settings.ShowRowNumbers = showRowNumbers;
         settings.SeparatorFormat = separatorFormat;
         settings.LaunchBehavior = launchBehavior;
-        settings.AutoCheckUpdatesOnStart = autoCheckUpdates;
         SaveSettings();
     }
 

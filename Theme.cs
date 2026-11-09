@@ -1300,15 +1300,16 @@ public sealed class DarkListView : ListView
 
     public int RowHeight => Font.Height + 8;
 
-    static bool SameCellColors(ListViewItem item, Color?[]? cellColors)
+    /// <summary>The color a cell of a row is drawn in: its own, else the row's, else the list's.</summary>
+    Color CellColor(ListRow row, int cell) => row.CellColors is { } colors && cell < colors.Length && colors[cell] is { } own ? own : row.Color ?? ForeColor;
+
+    /// <summary>Whether an item already shows a row's cell colors. Every cell is given its color, so this compares like with like.</summary>
+    bool SameCellColors(ListViewItem item, ListRow row)
     {
-        if (cellColors == null) return item.UseItemStyleForSubItems;
+        if (row.CellColors == null) return item.UseItemStyleForSubItems;
         if (item.UseItemStyleForSubItems) return false;
-        for (int c = 0; c < Math.Min(item.SubItems.Count, cellColors.Length); c++)
-        {
-            var expected = cellColors[c] ?? Color.Empty;
-            if (item.SubItems[c].ForeColor != expected) return false;
-        }
+        for (int c = 0; c < item.SubItems.Count; c++)
+            if (item.SubItems[c].ForeColor != CellColor(row, c)) return false;
         return true;
     }
 
@@ -1324,10 +1325,10 @@ public sealed class DarkListView : ListView
             var item = Items[i];
             same = item.SubItems.Count == rows[i].Cells.Length
                 && item.ForeColor == (rows[i].Color ?? ForeColor)
-                && rows[i].Cells.Select((cell, c) => item.SubItems[c].Text == cell).All(equal => equal)
+                && rows[i].Cells.Select((cell, c) => item.SubItems[c].Text == (cell ?? "")).All(equal => equal)
                 && (dividerBelowItems.Contains(item) == rows[i].DividerBelow)
                 && (separatorItems.Contains(item) == rows[i].IsSeparator)
-                && SameCellColors(item, rows[i].CellColors);
+                && SameCellColors(item, rows[i]);
         }
         if (same)
         {
@@ -1347,14 +1348,10 @@ public sealed class DarkListView : ListView
         {
             var item = new ListViewItem(row.Cells) { Tag = row.Tag };
             if (row.Color is { } color) item.ForeColor = color;
-            if (row.CellColors is { } cellColors)
+            if (row.CellColors != null)
             {
                 item.UseItemStyleForSubItems = false;
-                for (int c = 0; c < Math.Min(item.SubItems.Count, cellColors.Length); c++)
-                {
-                    if (cellColors[c] is { } cellColor)
-                        item.SubItems[c].ForeColor = cellColor;
-                }
+                for (int c = 0; c < item.SubItems.Count; c++) item.SubItems[c].ForeColor = CellColor(row, c);
             }
             if (row.DividerBelow) dividerBelowItems.Add(item);
             if (row.IsSeparator) separatorItems.Add(item);

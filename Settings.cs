@@ -12,7 +12,6 @@ public sealed class SettingsDialog : Form
     readonly Label separatorPreview = new() { AutoSize = true, ForeColor = Theme.Info, Margin = new Padding(0, 2, 0, 4) };
 
     readonly DarkComboBox launchBehaviorCombo = new(ComboBoxStyle.DropDownList);
-    readonly CheckBox autoCheckUpdatesBox;
 
     readonly TextBox gameBox = Theme.TextBox();
     readonly Label leftoversStatus = new() { AutoSize = true, ForeColor = Theme.Text, Margin = new Padding(0, 0, 0, 8) };
@@ -119,9 +118,6 @@ public sealed class SettingsDialog : Form
         launchRow.Controls.Add(new Label { Text = L.T("게임 실행 시:"), AutoSize = true, ForeColor = Theme.Muted, Anchor = AnchorStyles.Left, Margin = new Padding(0, 6, 8, 0) });
         launchRow.Controls.Add(launchBehaviorCombo);
 
-        autoCheckUpdatesBox = Theme.CheckBox(L.T("프로그램 시작 시 Nexus 모드 최신 버전 자동 확인"), manager.AutoCheckUpdatesOnStart);
-        autoCheckUpdatesBox.AutoSize = true;
-        autoCheckUpdatesBox.Margin = new Padding(0, 0, 0, 4);
 
         // 3. 게임 및 모드 폴더
         gameBox.Text = manager.Root;
@@ -227,9 +223,9 @@ public sealed class SettingsDialog : Form
         table.Controls.Add(sepRow, 0, 2);
         table.Controls.Add(separatorPreview, 0, 3);
 
-        table.Controls.Add(MakeHeader(L.T("실행 및 업데이트")), 0, 4);
+        // Nexus is asked only when the user presses [최신 버전 확인]: its API policy wants a user's action behind each check.
+        table.Controls.Add(MakeHeader(L.T("게임 실행")), 0, 4);
         table.Controls.Add(launchRow, 0, 5);
-        table.Controls.Add(autoCheckUpdatesBox, 0, 6);
 
         table.Controls.Add(MakeHeader(L.T("게임 및 모드 폴더")), 0, 7);
         table.Controls.Add(folderGrid, 0, 8);
@@ -264,7 +260,12 @@ public sealed class SettingsDialog : Form
         ok.Click += (_, _) =>
         {
             var root = NewGameRoot;
-            if (!string.IsNullOrEmpty(root) && !GameFolder.IsGameFolder(root))
+            if (root.Length == 0)
+            {
+                dialogStatus.Text = L.T("게임 폴더를 골라 주세요.");
+                return;
+            }
+            if (!GameFolder.IsGameFolder(root))
             {
                 dialogStatus.Text = L.T("게임 폴더가 아닙니다. ProjectPBZ와 platform 폴더가 있는 PBZ 폴더를 골라 주세요.");
                 return;
@@ -275,7 +276,7 @@ public sealed class SettingsDialog : Form
             if (string.IsNullOrEmpty(sepFmt)) sepFmt = "── {0} ──";
             if (!sepFmt.Contains("{0}")) sepFmt = $"── {sepFmt} ──";
 
-            manager.SavePreferences(showRowNumbersBox.Checked, sepFmt, launch, autoCheckUpdatesBox.Checked);
+            manager.SavePreferences(showRowNumbersBox.Checked, sepFmt, launch);
 
             if (!root.Equals(manager.Root, StringComparison.OrdinalIgnoreCase))
             {

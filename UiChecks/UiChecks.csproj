@@ -18,6 +18,7 @@
     <Compile Include="..\MainForm.cs" Link="MainForm.cs" />
     <Compile Include="..\Menus.cs" Link="Menus.cs" />
     <Compile Include="..\Presets.cs" Link="Presets.cs" />
+    <Compile Include="..\Settings.cs" Link="Settings.cs" />
     <Compile Include="..\AppConfig.cs" Link="AppConfig.cs" />
   </ItemGroup>
   <ItemGroup>
