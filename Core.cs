@@ -609,10 +609,10 @@ public static class NexusApi
     {
         var client = handlerForChecks != null ? new HttpClient(handlerForChecks, false) : new HttpClient();
         client.Timeout = TimeSpan.FromSeconds(20);
-        client.DefaultRequestHeaders.Add("User-Agent", "PBZModManager/1.7");
+        client.DefaultRequestHeaders.Add("User-Agent", "PBZModManager/1.8");
         // Nexus's API policy asks every client to identify itself with these two.
         client.DefaultRequestHeaders.Add("Application-Name", "PBZModManager");
-        client.DefaultRequestHeaders.Add("Application-Version", "1.7.0");
+        client.DefaultRequestHeaders.Add("Application-Version", "1.8.0");
         return client;
     }
 
