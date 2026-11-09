@@ -42,8 +42,8 @@ public sealed partial class MainForm : Form, IMessageFilter
     readonly Button moveDownButton = Theme.Button(L.T("아래로"));
     readonly Button refreshButton = Theme.Button(L.T("새로고침"));
     readonly Button checkLatestButton = Theme.Button(L.T("최신 버전 확인"));
+    readonly Button settingsButton = Theme.Button(L.T("설정..."));
     readonly Button openModButton = Theme.Button(L.T("모드 폴더 열기"));
-    readonly Button folderSettingsButton = Theme.Button(L.T("폴더 설정..."));
     readonly Button launchButton = Theme.Button(L.T("게임 실행"), primary: true);
     readonly DarkComboBox languageBox = new(ComboBoxStyle.DropDownList) { Width = 100 };
     /// <summary>Shown in the status bar when GitHub has a newer release of this manager.</summary>
@@ -55,9 +55,11 @@ public sealed partial class MainForm : Form, IMessageFilter
     public Func<string, (string Version, string Url)?> CheckForAppUpdate { get; set; } = AppUpdate.Check;
     /// <summary>Starts the manager again; checks replace it so nothing restarts.</summary>
     public Action RestartApp { get; set; } = Application.Restart;
-    readonly Button openLeftoversButton = Theme.Button(L.T("보관 폴더 열기"));
-    readonly Button clearLeftoversButton = Theme.Button(L.T("보관 폴더 비우기..."));
     readonly Label statusLabel = new() { AutoSize = true, Dock = DockStyle.Left, Padding = new Padding(8, 5, 8, 5), ForeColor = Theme.Muted, Text = L.T("준비") };
+    readonly DarkToolTip tip = new();
+    readonly Button toggleFilesButton = Theme.Button(L.T("파일 접기 ▾"));
+    readonly DarkSplitContainer lower = new() { Dock = DockStyle.Fill, Orientation = Orientation.Horizontal, FixedPanel = FixedPanel.Panel2 };
+    readonly DarkSplitContainer zipSplit = new() { Dock = DockStyle.Fill, Orientation = Orientation.Horizontal, FixedPanel = FixedPanel.Panel2 };
 
     List<ModGroup> mods = new();
     /// <summary>The height the user gave the mod info and file panels; the lists above take the rest.</summary>
@@ -91,19 +93,19 @@ public sealed partial class MainForm : Form, IMessageFilter
         // One row, every item the control height and centred on it: the folders, then the buttons.
         var header = new Panel { Dock = DockStyle.Top, Height = Theme.ControlHeight + 12, Padding = new Padding(8, 6, 8, 6) };
         header.Controls.Add(new Label { AutoEllipsis = true, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, ForeColor = Theme.Muted, Text = L.F("게임: {0}    모드 보관: {1}", manager.Root, manager.ArchiveDir) });
-        openModButton.Margin = new Padding(14, 0, 0, 0);
+        settingsButton.Margin = new Padding(14, 0, 0, 0);
+        openModButton.Margin = new Padding(6, 0, 0, 0);
         var tools = new FlowLayoutPanel { Dock = DockStyle.Right, AutoSize = true, WrapContents = false, Padding = Padding.Empty, Margin = Padding.Empty };
-        folderSettingsButton.Margin = new Padding(6, 0, 0, 0);
         languageBox.Dock = DockStyle.None;
         languageBox.Margin = new Padding(14, 0, 0, 0);
         foreach (var language in L.Languages) languageBox.Items.Add(language.Name);
         languageBox.SelectedIndex = Array.FindIndex(L.Languages, l => l.Code == L.Current);
         launchButton.Margin = new Padding(14, 0, 0, 0);
-        tools.Controls.AddRange(new Control[] { openModButton, folderSettingsButton, languageBox, launchButton });
+        tools.Controls.AddRange(new Control[] { settingsButton, openModButton, languageBox, launchButton });
         header.Controls.Add(tools);
-        var tip = new DarkToolTip();
         tip.SetToolTip(languageBox, "Language / 언어 / 语言 / 言語");
         tip.SetToolTip(launchButton, manager.GameExe);
+        tip.SetToolTip(toggleFilesButton, L.T("선택한 모드의 파일 목록을 접습니다."));
         // JS mods are always placed for the loader that is installed; a choice saved by older versions is dropped.
         if (manager.Runtime != ScriptRuntime.Auto)
             try { manager.SetRuntime(ScriptRuntime.Auto); }
@@ -131,7 +133,6 @@ public sealed partial class MainForm : Form, IMessageFilter
         filterBox.Width = 130;
 
         // Left: the mod list over its info. Right: what is installed over its files.
-        var zipSplit = new DarkSplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Horizontal, FixedPanel = FixedPanel.Panel2 };
         Theme.StyleSplit(zipSplit);
         var zipGroup = Theme.Group(L.T("모드 목록 (여기에 끌어다 놓아 추가)"), zipList,
             new Control[] { installButton, addButton, addByAddressButton, checkLatestButton, refreshButton, unlistButton, deleteFileButton, cleanVersionsButton, shareButton, importButton },
@@ -140,9 +141,10 @@ public sealed partial class MainForm : Form, IMessageFilter
         zipSplit.Panel2.Controls.Add(Theme.Group(L.T("모드 정보"), infoEditor));
         EnableFileDrop(zipGroup);
 
-        var lower = new DarkSplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Horizontal, FixedPanel = FixedPanel.Panel2 };
         Theme.StyleSplit(lower);
-        lower.Panel1.Controls.Add(Theme.Group(L.T("설치된 모드"), installedList, removeButton, optionsButton, moveUpButton, moveDownButton, separatorButton, presetButton, openLeftoversButton, clearLeftoversButton));
+        lower.Panel1.Controls.Add(Theme.Group(L.T("설치된 모드"), installedList,
+            new Control[] { removeButton, presetButton, moveUpButton, moveDownButton, separatorButton, optionsButton },
+            new Control[] { toggleFilesButton }));
         lower.Panel2.Controls.Add(Theme.Group(L.T("선택한 모드의 파일"), fileList));
 
         var main = new DarkSplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Vertical };
@@ -170,6 +172,7 @@ public sealed partial class MainForm : Form, IMessageFilter
         bool syncing = false, dragging = false;
         void Follow(SplitContainer from, SplitContainer to)
         {
+            if (from.Panel2Collapsed || to.Panel2Collapsed) return;
             // Only a move the user made, by mouse or keys, sets the height; the window's own resizing does not.
             if (!syncing && dragging)
             {
@@ -187,6 +190,7 @@ public sealed partial class MainForm : Form, IMessageFilter
             syncing = true;
             foreach (var split in new[] { zipSplit, lower })
             {
+                if (split.Panel2Collapsed) continue;
                 int room = split.Height - split.SplitterWidth;
                 int height = Math.Max(split.Panel2MinSize, Math.Min(lowerHeight, room - MinListHeight));
                 if (split.SplitterDistance != room - height) SetSplit(split, room - height, split.SplitterDistance);
@@ -201,6 +205,22 @@ public sealed partial class MainForm : Form, IMessageFilter
         lower.SizeChanged += (_, _) => KeepLowerHeight();
         zipList.MultiSelect = true;
         installedList.MultiSelect = true;
+        zipList.ColumnWidthChanging += (_, e) =>
+        {
+            if (e.ColumnIndex == 0 && !manager.ShowRowNumbers)
+            {
+                e.Cancel = true;
+                e.NewWidth = 0;
+            }
+        };
+        installedList.ColumnWidthChanging += (_, e) =>
+        {
+            if (e.ColumnIndex == 0 && !manager.ShowRowNumbers)
+            {
+                e.Cancel = true;
+                e.NewWidth = 0;
+            }
+        };
 
         Load += async (_, _) =>
         {
@@ -212,11 +232,14 @@ public sealed partial class MainForm : Form, IMessageFilter
             zipList.SetColumnWidths(saved?.ModColumns);
             installedList.SetColumnWidths(saved?.InstalledColumns);
             fileList.SetColumnWidths(saved?.FileColumns);
+            ApplyRowNumberVisibility();
+            if (saved?.FilesCollapsed == true) SetFilesCollapsed(true);
             // Archives earlier versions kept beside the program move into the records once.
             if (Directory.EnumerateFiles(manager.ModDir, "*.zip").Any())
                 await Run(L.T("모드 파일 옮기는 중..."), p => manager.MoveArchivesIn(p));
             await RefreshAll();
             _ = LookForAppUpdate();
+            if (manager.AutoCheckUpdatesOnStart) _ = CheckLatest(silent: true);
             await OfferRecovery();
             if (filesToAdd.Length > 0) await AddZips(filesToAdd);
         };
@@ -238,7 +261,8 @@ public sealed partial class MainForm : Form, IMessageFilter
         };
         optionsButton.Click += async (_, _) => { if (SelectedInstalled() is { } mod) await ChangeOptions(mod); };
         separatorButton.Click += async (_, _) => { await Task.Yield(); await AddSeparator(); };
-        presetButton.Click += async (_, _) => { await Task.Yield(); await OpenPresets(); };
+        presetButton.Click += async (_, _) => { await Task.Yield(); OpenPresets(); };
+        toggleFilesButton.Click += (_, _) => SetFilesCollapsed(!lower.Panel2Collapsed);
         installedList.DoubleClick += async (_, _) => { await Task.Yield(); if (SelectedRow() is { IsSeparator: true } row) await RenameSeparator(row); };
         moveUpButton.Click += async (_, _) => await MoveSelected(-1);
         moveDownButton.Click += async (_, _) => await MoveSelected(1);
@@ -257,12 +281,10 @@ public sealed partial class MainForm : Form, IMessageFilter
             if (LinkOf(mod) == null && GitHubOf(mod) == null) DarkDialog.Show(this, L.T("모드 정보의 주소에 Nexus 모드 페이지나 GitHub 저장소 주소를 넣어 주세요."), Text);
             else OpenDownloadPage(mod);
         };
+        settingsButton.Click += async (_, _) => { await Task.Yield(); OpenSettings(); };
         openModButton.Click += (_, _) => OpenFolder(manager.ArchiveDir);
-        folderSettingsButton.Click += async (_, _) => { await Task.Yield(); ChangeFolders(); };
         launchButton.Click += async (_, _) => { await Task.Yield(); LaunchGame(); };
         languageBox.SelectionChangeCommitted += async (_, _) => { await Task.Yield(); ChangeLanguage(); };
-        openLeftoversButton.Click += (_, _) => OpenFolder(manager.LeftoversDir);
-        clearLeftoversButton.Click += async (_, _) => { await Task.Yield(); await ClearLeftovers(); };
         filterBox.SelectionChangeCommitted += (_, _) => RenderZips();
         infoEditor.Edited += NoteEdited;
         infoEditor.PicturesRequested += async () =>
@@ -1017,7 +1039,7 @@ public sealed partial class MainForm : Form, IMessageFilter
     /// Asks Nexus, and GitHub for mods kept there, about the listed mods, or only the ones given. Mods the user
     /// keeps out of checks are left alone. Only ever runs at the user's asking.
     /// </summary>
-    async Task CheckLatest(IReadOnlyCollection<ModGroup>? only = null)
+    async Task CheckLatest(IReadOnlyCollection<ModGroup>? only = null, bool silent = false)
     {
         var pool = (only ?? mods).Where(m => !IgnoresUpdates(m)).ToList();
         var asked = pool.Select(m => m.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -1031,6 +1053,7 @@ public sealed partial class MainForm : Form, IMessageFilter
         var unknown = pool.Where(m => targets.All(t => t.Key != m.Key) && onGitHub.All(g => g.Key != m.Key)).Select(m => m.Name).ToList();
         if (targets.Count == 0 && onGitHub.Count == 0)
         {
+            if (silent) return;
             // Nothing has an address any more, so no old result still applies.
             if (pool.Count(m => remote.Remove(m.Key)) > 0)
             {
@@ -1042,33 +1065,64 @@ public sealed partial class MainForm : Form, IMessageFilter
         }
 
         var unreachable = new List<string>();
-        Dictionary<string, RemoteInfo>? found = await Run(L.T("최신 버전 확인 중..."), report =>
+        Dictionary<string, RemoteInfo>? found = null;
+        if (silent)
         {
-            var results = new Dictionary<string, RemoteInfo>(StringComparer.OrdinalIgnoreCase);
-            try
+            found = await Task.Run(() =>
             {
-                if (targets.Count > 0)
-                    foreach (var pair in NexusApi.Check(targets)) results[pair.Key] = pair.Value;
-            }
-            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
-            {
-                throw new InvalidOperationException(L.T("Nexus에 연결하지 못했습니다. 인터넷 연결을 확인한 뒤 다시 시도해 주세요."), ex);
-            }
-            foreach (var (key, name, repo, zip) in onGitHub)
-            {
-                report(L.F("GitHub에서 {0} 확인 중...", name));
+                var results = new Dictionary<string, RemoteInfo>(StringComparer.OrdinalIgnoreCase);
                 try
                 {
-                    if (GitHubApi.Check(repo, zip) is { } info) results[key] = info;
+                    if (targets.Count > 0)
+                        foreach (var pair in NexusApi.Check(targets)) results[pair.Key] = pair.Value;
                 }
-                catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or InvalidOperationException or System.Text.Json.JsonException or IOException)
+                catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
                 {
-                    // One repository that cannot be read does not stop the others.
-                    unreachable.Add(name);
                 }
-            }
-            return results;
-        });
+                foreach (var (key, name, repo, zip) in onGitHub)
+                {
+                    try
+                    {
+                        if (GitHubApi.Check(repo, zip) is { } info) results[key] = info;
+                    }
+                    catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or InvalidOperationException or System.Text.Json.JsonException or IOException)
+                    {
+                        unreachable.Add(name);
+                    }
+                }
+                return results;
+            });
+        }
+        else
+        {
+            found = await Run(L.T("최신 버전 확인 중..."), report =>
+            {
+                var results = new Dictionary<string, RemoteInfo>(StringComparer.OrdinalIgnoreCase);
+                try
+                {
+                    if (targets.Count > 0)
+                        foreach (var pair in NexusApi.Check(targets)) results[pair.Key] = pair.Value;
+                }
+                catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+                {
+                    throw new InvalidOperationException(L.T("Nexus에 연결하지 못했습니다. 인터넷 연결을 확인한 뒤 다시 시도해 주세요."), ex);
+                }
+                foreach (var (key, name, repo, zip) in onGitHub)
+                {
+                    report(L.F("GitHub에서 {0} 확인 중...", name));
+                    try
+                    {
+                        if (GitHubApi.Check(repo, zip) is { } info) results[key] = info;
+                    }
+                    catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or InvalidOperationException or System.Text.Json.JsonException or IOException)
+                    {
+                        // One repository that cannot be read does not stop the others.
+                        unreachable.Add(name);
+                    }
+                }
+                return results;
+            });
+        }
         if (found == null) return;
 
         // A listed mod this check gave nothing for, with no address or one the source does not know, keeps no old result.
@@ -1135,6 +1189,7 @@ public sealed partial class MainForm : Form, IMessageFilter
         if (unreachable.Count > 0) lines.Add(L.F("GitHub에 연결하지 못함 (잠시 후 다시 시도해 주세요): {0}", string.Join(", ", unreachable)));
         if (missing.Count > 0) lines.Add(L.F("확인하지 못함 (모드 정보의 주소를 확인해 주세요): {0}", string.Join(", ", missing)));
         SetStatus(newer.Count > 0 ? L.F("새 버전 {0}개 있음", newer.Count) : L.T("최신 버전 확인 완료"));
+        if (silent) return;
         if (newer.Count == 0)
         {
             DarkDialog.Show(this, string.Join("\n\n", lines), L.T("최신 버전 확인"));
@@ -1157,7 +1212,7 @@ public sealed partial class MainForm : Form, IMessageFilter
         var exe = manager.GameExe;
         if (!File.Exists(exe))
         {
-            DarkDialog.Show(this, L.F("게임 실행 파일을 찾지 못했습니다: {0}\n이 매니저는 Steam 버전 기준입니다. [폴더 설정]에서 게임 폴더를 확인해 주세요.", exe), Text, isError: true);
+            DarkDialog.Show(this, L.F("게임 실행 파일을 찾지 못했습니다: {0}\n이 매니저는 Steam 버전 기준입니다. [설정]에서 게임 폴더를 확인해 주세요.", exe), Text, isError: true);
             return;
         }
         if (Manager.GameRunning())
@@ -1169,6 +1224,10 @@ public sealed partial class MainForm : Form, IMessageFilter
         {
             StartGame(exe);
             SetStatus(L.T("게임을 실행했습니다."));
+            if (manager.LaunchBehavior == GameLaunchBehavior.Minimize)
+                WindowState = FormWindowState.Minimized;
+            else if (manager.LaunchBehavior == GameLaunchBehavior.Close)
+                Close();
         }
         catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or IOException or InvalidOperationException)
         {
@@ -1210,26 +1269,51 @@ public sealed partial class MainForm : Form, IMessageFilter
         updateLink.Visible = true;
     }
 
-    // ---------------------------------------------------------------- folders
+    // ---------------------------------------------------------------- settings & display
 
-    /// <summary>Saves a new game folder with the records and restarts into it.</summary>
-    void ChangeFolders()
+    void ApplyRowNumberVisibility()
+    {
+        bool show = manager.ShowRowNumbers;
+        if (!show)
+        {
+            zipList.Columns[0].Width = 0;
+            installedList.Columns[0].Width = 0;
+        }
+        else
+        {
+            if (zipList.Columns[0].Width <= 0) zipList.Columns[0].Width = 44;
+            if (installedList.Columns[0].Width <= 0) installedList.Columns[0].Width = 44;
+        }
+        zipList.FitColumns();
+        installedList.FitColumns();
+    }
+
+    void SetFilesCollapsed(bool collapsed)
+    {
+        lower.Panel2Collapsed = collapsed;
+        toggleFilesButton.Text = collapsed ? L.T("파일 펼치기 ▴") : L.T("파일 접기 ▾");
+        tip.SetToolTip(toggleFilesButton, collapsed ? L.T("선택한 모드의 파일 목록을 펼칩니다.") : L.T("선택한 모드의 파일 목록을 접습니다."));
+        if (!collapsed)
+        {
+            SetSplit(lower, zipSplit.SplitterDistance, zipSplit.SplitterDistance);
+            lower.Invalidate();
+        }
+    }
+
+    void OpenSettings()
     {
         if (busy) return;
-        using var dialog = new FolderSettingsDialog(manager.Root, manager.ModDir);
+        using var dialog = new SettingsDialog(manager, OpenFolder, RestartApp);
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
-        var root = Path.GetFullPath(dialog.GameRoot).TrimEnd('\\');
-        if (root.Equals(manager.Root, StringComparison.OrdinalIgnoreCase)) return;
-        try
+        ApplyRowNumberVisibility();
+        RenderInstalled();
+        RenderZips();
+        statusLabel.Text = L.T("설정을 저장했습니다.");
+        if (dialog.NeedsRestart)
         {
-            new Manager(root, manager.ModDir).RememberGameRoot();
+            if (DarkDialog.Show(this, L.T("새 게임 폴더로 매니저를 다시 시작할까요?"), L.T("설정"), yesNo: true) == DialogResult.Yes)
+                RestartApp();
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            DarkDialog.Show(this, L.F("설정을 저장하지 못했습니다: {0}", ex.Message), L.T("폴더 설정"), isError: true);
-            return;
-        }
-        if (DarkDialog.Show(this, L.T("새 게임 폴더로 매니저를 다시 시작할까요?"), L.T("폴더 설정"), yesNo: true) == DialogResult.Yes) RestartApp();
     }
     // ---------------------------------------------------------------- window place
 
@@ -1260,6 +1344,7 @@ public sealed partial class MainForm : Form, IMessageFilter
                 Maximized = WindowState == FormWindowState.Maximized,
                 MainSplit = main.SplitterDistance, LeftSplit = left.SplitterDistance, RightSplit = right.SplitterDistance,
                 ModColumns = zipList.ColumnWidths, InstalledColumns = installedList.ColumnWidths, FileColumns = fileList.ColumnWidths,
+                FilesCollapsed = lower.Panel2Collapsed,
             });
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -1651,28 +1736,6 @@ public sealed partial class MainForm : Form, IMessageFilter
 
     string? selectAfterSeparator;
 
-    /// <summary>
-    /// Empties the keep folder, where removals set aside files the mod had not brought, such as its settings
-    /// or files changed after install. They go to the Recycle Bin, so they can still be brought back.
-    /// </summary>
-    async Task ClearLeftovers()
-    {
-        if (busy) return;
-        var (runs, files, bytes) = manager.LeftoversSize();
-        if (files == 0)
-        {
-            DarkDialog.Show(this, L.T("보관 폴더가 비어 있습니다."), Text);
-            return;
-        }
-        var question = L.F("보관 폴더의 파일 {0}개({1:0.#} MB, 제거 {2}번 분량)를 휴지통으로 보낼까요?\n\n", files, bytes / 1048576.0, runs)
-            + L.T("모드를 제거할 때 지우지 않고 옮겨 둔 파일들입니다. 모드 설정 파일이나 설치 후 바뀐 파일일 수 있으니, 필요한 것이 있으면 먼저 [보관 폴더 열기]로 확인해 주세요.");
-        if (DarkDialog.Show(this, question, L.T("보관 폴더 비우기"), yesNo: true) != DialogResult.Yes) return;
-        var failed = await Run(L.T("보관 폴더 비우는 중..."), _ => manager.ClearLeftovers());
-        if (failed == null) return;
-        if (failed.Count > 0) DarkDialog.Show(this, L.T("휴지통으로 보내지 못한 것:\n") + string.Join("\n", failed), L.T("보관 폴더 비우기"), isError: true);
-        else SetStatus(L.F("보관 폴더를 비웠습니다 ({0:0.#} MB, 휴지통에서 되살릴 수 있음).", bytes / 1048576.0));
-    }
-
     /// <summary>Adds a named separator below the selected line, or at the top.</summary>
     async Task AddSeparator()
     {
@@ -1840,7 +1903,7 @@ public sealed partial class MainForm : Form, IMessageFilter
         selectAfterSeparator = null;
         int number = 0;
         installedList.SetRows(installedRows.Select(row => row.Mod is not { } mod
-            ? new ListRow(new[] { "", $"── {row.Text} ──", "", "", "" }, row, Theme.Info)
+            ? new ListRow(new[] { "", manager.FormatSeparator(row.Text), "", "", "" }, row, Theme.Info)
             : new ListRow(new[]
             {
                 (++number).ToString(),
@@ -1865,8 +1928,14 @@ public sealed partial class MainForm : Form, IMessageFilter
         var missing = mod.Versions.All(v => v.Missing) ? L.T("파일 없음") : mod.Versions.Any(v => v.Missing) ? L.T("일부 파일 없음") : null;
         if (missing != null) status = $"{missing} · {status}";
         var shownVersion = mod.Latest.Version.Length > 0 ? mod.Latest.Version : LocalVersionOf(mod) is { Length: > 0 } known ? $"({known})" : "";
+        Color? statusColor = missing != null ? Theme.Danger
+            : newer != null ? Theme.Warning
+            : mod.UpdateAvailable ? null
+            : mod.InstalledFile != null ? Theme.Success
+            : null;
+        var cellColors = statusColor != null ? new Color?[] { null, null, null, null, null, statusColor } : null;
         return new ListRow(new[] { number.ToString(), name, shownVersion, category, ToolOf(mod.Latest), status },
-            mod, missing != null ? Theme.Danger : newer != null ? Theme.Warning : mod.UpdateAvailable ? Theme.Info : null);
+            mod, Color: null, CellColors: cellColors);
     }
 
     /// <summary>A place held by an address: it says which version to get, the pinned one or the newest.</summary>

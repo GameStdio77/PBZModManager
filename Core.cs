@@ -72,10 +72,14 @@ public sealed class WindowLayout
     public int[]? ModColumns { get; set; }
     public int[]? InstalledColumns { get; set; }
     public int[]? FileColumns { get; set; }
+    public bool FilesCollapsed { get; set; }
 }
 
 /// <summary>Which script loader runs the JavaScript mods. Auto follows the one that is installed.</summary>
 public enum ScriptRuntime { Auto, Loader, Menu }
+
+/// <summary>How the manager reacts when the game is launched.</summary>
+public enum GameLaunchBehavior { KeepOpen, Minimize, Close }
 
 public sealed record OptionChoice(string Folder, string Label);
 
@@ -1226,6 +1230,10 @@ public sealed partial class Manager
         public string GameRoot { get; set; } = "";
         /// <summary>The language picked in the window; empty follows Windows.</summary>
         public string Language { get; set; } = "";
+        public bool ShowRowNumbers { get; set; } = true;
+        public string SeparatorFormat { get; set; } = "── {0} ──";
+        public GameLaunchBehavior LaunchBehavior { get; set; } = GameLaunchBehavior.KeepOpen;
+        public bool AutoCheckUpdatesOnStart { get; set; } = false;
     }
 
     Settings settings;
@@ -1261,6 +1269,30 @@ public sealed partial class Manager
     public void SaveLanguage(string code)
     {
         settings.Language = code;
+        SaveSettings();
+    }
+
+    public bool ShowRowNumbers => settings.ShowRowNumbers;
+    public string SeparatorFormat => string.IsNullOrWhiteSpace(settings.SeparatorFormat) ? "── {0} ──" : settings.SeparatorFormat;
+    public GameLaunchBehavior LaunchBehavior => settings.LaunchBehavior;
+    public bool AutoCheckUpdatesOnStart => settings.AutoCheckUpdatesOnStart;
+
+    public static string FormatSeparator(string text, string? fmt = null)
+    {
+        if (string.IsNullOrWhiteSpace(fmt)) fmt = "── {0} ──";
+        if (!fmt.Contains("{0}")) fmt = $"── {fmt} ──";
+        try { return string.Format(fmt, text); }
+        catch { return $"── {text} ──"; }
+    }
+
+    public string FormatSeparator(string text) => FormatSeparator(text, SeparatorFormat);
+
+    public void SavePreferences(bool showRowNumbers, string separatorFormat, GameLaunchBehavior launchBehavior, bool autoCheckUpdates)
+    {
+        settings.ShowRowNumbers = showRowNumbers;
+        settings.SeparatorFormat = separatorFormat;
+        settings.LaunchBehavior = launchBehavior;
+        settings.AutoCheckUpdatesOnStart = autoCheckUpdates;
         SaveSettings();
     }
 

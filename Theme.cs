@@ -21,6 +21,7 @@ public static class Theme
     public static readonly Color Warning = Color.FromArgb(240, 163, 75);
     public static readonly Color Info = Color.FromArgb(127, 182, 240);
     public static readonly Color Danger = Color.FromArgb(255, 123, 123);
+    public static readonly Color Success = Color.FromArgb(128, 208, 150);
     public static readonly Color Dim = Color.FromArgb(124, 129, 141);
     public static readonly Color Disabled = Color.FromArgb(134, 139, 151);
 
@@ -68,6 +69,8 @@ public static class Theme
     }
 
     public static Button Button(string text, bool primary = false) => new DarkButton(text, primary);
+
+    public static CheckBox CheckBox(string text, bool check = false) => new DarkCheckBox(text, check);
 
     /// <summary>A borderless text box. Put it in <see cref="Field"/> or <see cref="MemoField"/> for the frame.</summary>
     public static TextBox TextBox(bool multiline = false)
@@ -592,6 +595,51 @@ public sealed class DarkButton : Button
     }
 }
 
+/// <summary>A checkbox drawn in the dark palette with a custom box and checkmark.</summary>
+public sealed class DarkCheckBox : CheckBox
+{
+    public DarkCheckBox(string text = "", bool checkedState = false)
+    {
+        Text = text;
+        Checked = checkedState;
+        AutoSize = true;
+        ForeColor = Theme.Text;
+        Cursor = Cursors.Hand;
+        SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        using var bg = new SolidBrush(Parent?.BackColor ?? Theme.Background);
+        e.Graphics.FillRectangle(bg, ClientRectangle);
+
+        int boxSize = 15;
+        int boxY = (ClientSize.Height - boxSize) / 2;
+        var boxRect = new Rectangle(0, boxY, boxSize, boxSize);
+
+        using (var fill = new SolidBrush(Checked ? Theme.Raised : Theme.Surface))
+            e.Graphics.FillRectangle(fill, boxRect);
+
+        using (var border = new Pen(Focused ? Theme.Info : Theme.Border))
+            e.Graphics.DrawRectangle(border, boxRect);
+
+        if (Checked)
+        {
+            using var markPen = new Pen(Theme.Text, 2f);
+            e.Graphics.DrawLines(markPen, new[]
+            {
+                new Point(boxRect.Left + 3, boxRect.Top + 7),
+                new Point(boxRect.Left + 6, boxRect.Top + 11),
+                new Point(boxRect.Left + 12, boxRect.Top + 4)
+            });
+        }
+
+        var textRect = new Rectangle(boxSize + 6, 0, ClientSize.Width - boxSize - 6, ClientSize.Height);
+        TextRenderer.DrawText(e.Graphics, Text, Font, textRect, Enabled ? Theme.Text : Theme.Disabled,
+            TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
+    }
+}
+
 /// <summary>A dropdown with the app's border, chevron, height and list colors.</summary>
 public sealed class DarkComboBox : ComboBox
 {
@@ -1031,7 +1079,7 @@ public sealed class DarkScrollBar : Control
     static extern IntPtr SendMessage(IntPtr hwnd, int message, IntPtr wParam, ref Point lParam);
 }
 
-public sealed record ListRow(string[] Cells, object Tag, Color? Color = null, bool DividerBelow = false, bool IsSeparator = false);
+public sealed record ListRow(string[] Cells, object Tag, Color? Color = null, bool DividerBelow = false, bool IsSeparator = false, Color?[]? CellColors = null);
 
 /// <summary>A tooltip drawn in the dark palette with custom borders, padding and font.</summary>
 public sealed class DarkToolTip : ToolTip
@@ -1133,7 +1181,13 @@ public sealed class DarkListView : ListView
             bool selected = e.Item?.Selected == true;
             using var fill = new SolidBrush(selected ? Theme.Selection : Theme.Surface);
             e.Graphics.FillRectangle(fill, e.Bounds);
-            var color = selected ? Color.White : e.Item?.ForeColor ?? Theme.Text;
+            Color subColor = Color.Empty;
+            if (e.Item?.UseItemStyleForSubItems == false && e.SubItem != null)
+                subColor = e.SubItem.ForeColor;
+            var itemColor = (subColor != Color.Empty && subColor.A != 0)
+                ? subColor
+                : (e.Item?.ForeColor ?? Theme.Text);
+            var color = selected ? Color.White : itemColor;
             TextRenderer.DrawText(e.Graphics, e.SubItem?.Text, Font, Inset(e.Bounds), color, CellFlags);
             if (e.Item != null && dividerBelowItems.Contains(e.Item))
             {
@@ -1246,6 +1300,18 @@ public sealed class DarkListView : ListView
 
     public int RowHeight => Font.Height + 8;
 
+    static bool SameCellColors(ListViewItem item, Color?[]? cellColors)
+    {
+        if (cellColors == null) return item.UseItemStyleForSubItems;
+        if (item.UseItemStyleForSubItems) return false;
+        for (int c = 0; c < Math.Min(item.SubItems.Count, cellColors.Length); c++)
+        {
+            var expected = cellColors[c] ?? Color.Empty;
+            if (item.SubItems[c].ForeColor != expected) return false;
+        }
+        return true;
+    }
+
     /// <summary>
     /// Replaces the rows only if they differ. Clearing and refilling an unchanged list is what made
     /// it blink on every refresh, and it also lost the scroll position.
@@ -1260,7 +1326,8 @@ public sealed class DarkListView : ListView
                 && item.ForeColor == (rows[i].Color ?? ForeColor)
                 && rows[i].Cells.Select((cell, c) => item.SubItems[c].Text == cell).All(equal => equal)
                 && (dividerBelowItems.Contains(item) == rows[i].DividerBelow)
-                && (separatorItems.Contains(item) == rows[i].IsSeparator);
+                && (separatorItems.Contains(item) == rows[i].IsSeparator)
+                && SameCellColors(item, rows[i].CellColors);
         }
         if (same)
         {
@@ -1280,6 +1347,15 @@ public sealed class DarkListView : ListView
         {
             var item = new ListViewItem(row.Cells) { Tag = row.Tag };
             if (row.Color is { } color) item.ForeColor = color;
+            if (row.CellColors is { } cellColors)
+            {
+                item.UseItemStyleForSubItems = false;
+                for (int c = 0; c < Math.Min(item.SubItems.Count, cellColors.Length); c++)
+                {
+                    if (cellColors[c] is { } cellColor)
+                        item.SubItems[c].ForeColor = cellColor;
+                }
+            }
             if (row.DividerBelow) dividerBelowItems.Add(item);
             if (row.IsSeparator) separatorItems.Add(item);
             Items.Add(item);
@@ -1435,9 +1511,18 @@ public sealed class DarkListView : ListView
             var style = GetWindowLongPtr(Handle, GwlStyle).ToInt64();
             if ((style & WsHScroll) != 0) SetWindowLongPtr(Handle, GwlStyle, (IntPtr)(style & ~WsHScroll));
         }
+        else if (m.Msg == WmEraseBkgnd)
+        {
+            using var g = Graphics.FromHdc(m.WParam);
+            using var brush = new SolidBrush(Theme.Surface);
+            g.FillRectangle(brush, ClientRectangle);
+            m.Result = (IntPtr)1;
+            return;
+        }
         base.WndProc(ref m);
     }
 
+    const int WmEraseBkgnd = 0x0014;
     const int WmNcCalcSize = 0x0083;
     const int GwlStyle = -16;
     const long WsHScroll = 0x00100000;

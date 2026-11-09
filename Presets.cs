@@ -42,7 +42,9 @@ public sealed record PresetHost(
     Func<List<PresetChoice>> Choices,
     Func<Preset?, List<PresetLine>> StartLines,
     Func<Preset, Preset> Refresh,
-    Action<List<Preset>> Save);
+    Action<List<Preset>> Save,
+    Func<string, string>? FormatSeparator = null,
+    Func<Preset, PresetMode, IReadOnlyList<Preset>, IWin32Window, Task>? ApplyPreset = null);
 
 /// <summary>The user's presets: made from what is installed, edited, and applied in one of three ways.</summary>
 public sealed class PresetDialog : Form
@@ -51,8 +53,9 @@ public sealed class PresetDialog : Form
     readonly DarkListView modList = new(0, (L.T("모드"), 260), (L.T("버전"), 100), (L.T("지금 상태"), 120));
     readonly List<Preset> presets;
     readonly PresetHost host;
-    readonly Button applyButton = Theme.Button(L.T("적용 ▾"), primary: true);
-    readonly ContextMenuStrip applyMenu = new() { Renderer = new DarkMenuRenderer(), ShowImageMargin = false, BackColor = Theme.Surface, ForeColor = Theme.Text };
+    readonly Button applyMatchButton = Theme.Button(L.T("이 구성으로 맞추기"), primary: true);
+    readonly Button applyTurnOnButton = Theme.Button(L.T("모드 켜기"));
+    readonly Button applyTurnOffButton = Theme.Button(L.T("모드 끄기"));
     readonly List<Button> needsPreset = new();
 
     /// <summary>The preset and the way to apply it the user chose; null when closed without applying.</summary>
@@ -74,7 +77,7 @@ public sealed class PresetDialog : Form
 
         var hint = new Label
         {
-            Text = L.T("설치된 모드 구성을 저장해 두고 한 번에 적용합니다. [적용 ▾]에서 이 구성으로 맞출지(나머지 제거), 이 모드들만 켤지, 끌지 고릅니다. 교체 그룹이 같은 프리셋끼리는 같이 쓰지 않습니다."),
+            Text = L.T("설치된 모드 구성을 저장해 두고 한 번에 적용합니다. 이 구성으로 맞출지(나머지 제거), 이 모드들만 켤지, 끌지 고릅니다. 교체 그룹이 같은 프리셋끼리는 같이 쓰지 않습니다."),
             Dock = DockStyle.Top, AutoSize = false, Height = 44, ForeColor = Theme.Muted, Padding = new Padding(12, 10, 12, 0),
         };
         var split = new DarkSplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Vertical };
@@ -101,46 +104,70 @@ public sealed class PresetDialog : Form
         var close = Theme.Button(L.T("닫기"));
         close.DialogResult = DialogResult.Cancel;
         CancelButton = close;
-        applyButton.Margin = new Padding(0, 0, 6, 0);
-        needsPreset.Add(applyButton);
-        var bar = new TableLayoutPanel { Dock = DockStyle.Bottom, Height = Theme.ControlHeight + 18, ColumnCount = 3, Padding = new Padding(10, 6, 10, 6) };
+
+        applyMatchButton.Margin = new Padding(0, 0, 6, 0);
+        applyTurnOnButton.Margin = new Padding(0, 0, 6, 0);
+        applyTurnOffButton.Margin = new Padding(0, 0, 6, 0);
+        close.Margin = Padding.Empty;
+
+        needsPreset.Add(applyMatchButton);
+        needsPreset.Add(applyTurnOnButton);
+        needsPreset.Add(applyTurnOffButton);
+
+        applyMatchButton.Click += async (_, _) => { await Task.Yield(); await Apply(PresetMode.Match); };
+        applyTurnOnButton.Click += async (_, _) => { await Task.Yield(); await Apply(PresetMode.TurnOn); };
+        applyTurnOffButton.Click += async (_, _) => { await Task.Yield(); await Apply(PresetMode.TurnOff); };
+
+        var tip = new DarkToolTip();
+        tip.SetToolTip(applyMatchButton, L.T("이 프리셋의 모드들만 설치하고, 프리셋에 없는 모드는 제거합니다."));
+        tip.SetToolTip(applyTurnOnButton, L.T("현재 설치된 다른 모드는 그대로 두고, 이 프리셋의 모드들만 켭니다."));
+        tip.SetToolTip(applyTurnOffButton, L.T("이 프리셋에 포함된 모드들만 끕니다."));
+
+        var right = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Padding = Padding.Empty, Margin = Padding.Empty };
+        right.Controls.Add(applyMatchButton);
+        right.Controls.Add(applyTurnOnButton);
+        right.Controls.Add(applyTurnOffButton);
+        right.Controls.Add(close);
+
+        var bar = new TableLayoutPanel { Dock = DockStyle.Bottom, Height = Theme.ControlHeight + 18, ColumnCount = 2, Padding = new Padding(10, 6, 10, 6) };
         bar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         bar.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        bar.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         bar.Controls.Add(left, 0, 0);
-        bar.Controls.Add(applyButton, 1, 0);
-        bar.Controls.Add(close, 2, 0);
+        bar.Controls.Add(right, 1, 0);
         Controls.Add(split);
         Controls.Add(hint);
         Controls.Add(bar);
         Load += (_, _) => split.SplitterDistance = Math.Max(300, ClientSize.Width * 9 / 20);
 
-        foreach (var (text, mode) in new[]
-        {
-            (L.T("이 구성으로 맞추기 (나머지 모드 제거)"), PresetMode.Match),
-            (L.T("이 모드들 켜기 (나머지는 그대로)"), PresetMode.TurnOn),
-            (L.T("이 모드들 끄기"), PresetMode.TurnOff),
-        })
-        {
-            var item = new ToolStripMenuItem(text);
-            item.Click += (_, _) => Choose(mode);
-            applyMenu.Items.Add(item);
-        }
-        applyButton.Click += (_, _) => applyMenu.Show(applyButton, new Point(0, applyButton.Height));
         presetList.SelectedIndexChanged += (_, _) => ShowChosen();
         presetList.DoubleClick += (_, _) => EditChosen();
         Render(select);
     }
 
     Preset? Selected => presetList.SelectedItems.Count > 0 ? presetList.SelectedItems[0].Tag as Preset : null;
+    bool applying;
 
-    /// <summary>Applies the chosen preset in the way given, as the [적용 ▾] menu does.</summary>
-    public void Choose(PresetMode mode)
+    async Task Apply(PresetMode mode)
     {
+        if (applying) return;
         if (Selected is not { } preset) return;
-        Chosen = preset;
-        Mode = mode;
-        DialogResult = DialogResult.OK;
+        if (host.ApplyPreset == null) return;
+        applying = true;
+        UseWaitCursor = true;
+        try
+        {
+            await host.ApplyPreset(preset, mode, presets, this);
+        }
+        finally
+        {
+            applying = false;
+            if (!IsDisposed)
+            {
+                UseWaitCursor = false;
+                Render(preset.Id);
+                ShowChosen();
+            }
+        }
     }
 
     string StateOf(Preset preset)
@@ -176,7 +203,11 @@ public sealed class PresetDialog : Form
         modList.SetRows(order.Select(o =>
         {
             if (o.StartsWith(ModListShare.SeparatorPrefix, StringComparison.Ordinal))
-                return new ListRow(new[] { $"── {o[ModListShare.SeparatorPrefix.Length..]} ──", "", "" }, o, Theme.Info);
+            {
+                var text = o[ModListShare.SeparatorPrefix.Length..];
+                var formatted = host.FormatSeparator != null ? host.FormatSeparator(text) : Manager.FormatSeparator(text);
+                return new ListRow(new[] { formatted, "", "" }, o, Theme.Info);
+            }
             var e = preset.Mods.FirstOrDefault(m => m.Key.Equals(o, StringComparison.OrdinalIgnoreCase));
             if (e == null) return null;
             var state = host.StateOf(e);
@@ -195,7 +226,7 @@ public sealed class PresetDialog : Form
 
     void CreateNew()
     {
-        using var editor = new PresetEditor(L.T("새 프리셋"), NextName(), "", Groups(), host.Choices(), host.StartLines(null));
+        using var editor = new PresetEditor(L.T("새 프리셋"), NextName(), "", Groups(), host.Choices(), host.StartLines(null), host.FormatSeparator);
         if (editor.ShowDialog(this) != DialogResult.OK) return;
         var preset = editor.Build(new Preset { CreatedAt = DateTime.Now });
         presets.Add(preset);
@@ -214,7 +245,7 @@ public sealed class PresetDialog : Form
     void EditChosen()
     {
         if (Selected is not { } preset) return;
-        using var editor = new PresetEditor(L.F("프리셋 수정 - {0}", preset.Name), preset.Name, preset.Group, Groups(), host.Choices(), host.StartLines(preset));
+        using var editor = new PresetEditor(L.F("프리셋 수정 - {0}", preset.Name), preset.Name, preset.Group, Groups(), host.Choices(), host.StartLines(preset), host.FormatSeparator);
         if (editor.ShowDialog(this) != DialogResult.OK) return;
         var edited = editor.Build(preset);
         presets[presets.IndexOf(preset)] = edited;
@@ -275,16 +306,18 @@ public sealed class PresetEditor : Form
     readonly Button ok = Theme.Button(L.T("저장"), primary: true);
     readonly List<PresetChoice> choices;
     readonly List<string> groups;
+    readonly Func<string, string>? formatSeparator;
     string group;
 
     public List<PresetLine> Lines { get; }
     public string PresetName => nameBox.Text.Trim();
     public string Group => group;
 
-    public PresetEditor(string title, string name, string group, List<string> groups, List<PresetChoice> choices, List<PresetLine> lines)
+    public PresetEditor(string title, string name, string group, List<string> groups, List<PresetChoice> choices, List<PresetLine> lines, Func<string, string>? formatSeparator = null)
     {
         this.choices = choices;
         this.groups = groups;
+        this.formatSeparator = formatSeparator;
         this.group = group.Trim();
         Lines = lines;
         Text = title;
@@ -495,7 +528,7 @@ public sealed class PresetEditor : Form
                 InPreset(c.Key) ? Theme.Dim : null)).ToList());
         int number = 0;
         right.SetRows(Lines.Select(l => l.IsSeparator
-            ? new ListRow(new[] { "", $"── {l.Separator} ──", "", "" }, l, Theme.Info)
+            ? new ListRow(new[] { "", formatSeparator != null ? formatSeparator(l.Separator!) : Manager.FormatSeparator(l.Separator!), "", "" }, l, Theme.Info)
             : new ListRow(new[] { (++number).ToString(), l.Name, l.Version, l.Version.Length > 0 ? TickList.Tick(l.Pin) : "" }, l,
                 choices.Any(c => !c.Heading && c.Key.Equals(l.Key, StringComparison.OrdinalIgnoreCase)) ? null : Theme.Warning)).ToList());
         if (keepKeys != null || keepLines != null)
@@ -668,7 +701,9 @@ public sealed partial class MainForm
         {
             try { manager.SavePresets(list); }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { DarkDialog.Show(this, ex.Message, L.T("프리셋"), isError: true); }
-        });
+        },
+        FormatSeparator: manager.FormatSeparator,
+        ApplyPreset: (preset, mode, all, owner) => ApplyPreset(preset, mode, all, owner));
 
     /// <summary>Every listed mod as the mod list shows it, grouped and sorted the same, whatever its filter.</summary>
     List<PresetChoice> PresetChoices()
@@ -767,22 +802,16 @@ public sealed partial class MainForm
         return preset;
     }
 
-    /// <summary>Opens the presets; one chosen to apply is shown first, then applied.</summary>
-    async Task OpenPresets(string? select = null)
+    /// <summary>Opens the presets dialog.</summary>
+    void OpenPresets(string? select = null)
     {
-        Preset? chosen;
-        PresetMode mode;
-        List<Preset> all;
-        using (var dialog = new PresetDialog(manager.LoadPresets(), MakePresetHost(), select))
-        {
-            if (dialog.ShowDialog(this) != DialogResult.OK || dialog.Chosen == null) return;
-            (chosen, mode, all) = (dialog.Chosen, dialog.Mode, dialog.Presets.ToList());
-        }
-        await ApplyPreset(chosen, mode, all);
+        using var dialog = new PresetDialog(manager.LoadPresets(), MakePresetHost(), select);
+        dialog.ShowDialog(this);
     }
 
-    async Task ApplyPreset(Preset preset, PresetMode mode, IReadOnlyList<Preset> all)
+    async Task ApplyPreset(Preset preset, PresetMode mode, IReadOnlyList<Preset> all, IWin32Window? owner = null)
     {
+        owner ??= this;
         var steps = PresetPlanner.Plan(preset, mode, mods, installed, all);
         var order = preset.Order.Count > 0 ? preset.Order : preset.Mods.Select(m => m.Key).ToList();
         var orderToApply = mode != PresetMode.TurnOff && order.Count > 0;
@@ -790,12 +819,12 @@ public sealed partial class MainForm
         {
             if (orderToApply) { manager.ApplyPresetOrder(order, mode == PresetMode.Match); await RefreshAll(); }
             var skipped = steps.Where(s => s.Action == PresetAction.Skip).Select(s => $"  {s.Name}: {s.Note}").ToList();
-            DarkDialog.Show(this, L.F("{0}: 바꿀 모드가 없습니다.", preset.Name) + (skipped.Count > 0 ? "\n\n" + L.T("건너뛴 모드:") + "\n" + string.Join("\n", skipped) : ""), L.T("프리셋"));
+            DarkDialog.Show(owner, L.F("{0}: 바꿀 모드가 없습니다.", preset.Name) + (skipped.Count > 0 ? "\n\n" + L.T("건너뛴 모드:") + "\n" + string.Join("\n", skipped) : ""), L.T("프리셋"));
             return;
         }
         using (var preview = new PresetPreview(preset.Name, mode, steps, preset.Group))
         {
-            if (preview.ShowDialog(this) != DialogResult.OK) return;
+            if (preview.ShowDialog(owner) != DialogResult.OK) return;
             steps = preview.Agreed();
         }
 
@@ -828,7 +857,7 @@ public sealed partial class MainForm
         }
         await FollowLoaderChange();
         SetStatus(L.F("{0} 적용: 설치·변경 {1}개, 제거 {2}개", preset.Name, done, removing.Count));
-        if (errors.Count > 0) DarkDialog.Show(this, L.T("적용하지 못한 모드:") + "\n" + string.Join("\n", errors), L.T("프리셋"), isError: true);
+        if (errors.Count > 0) DarkDialog.Show(owner, L.T("적용하지 못한 모드:") + "\n" + string.Join("\n", errors), L.T("프리셋"), isError: true);
     }
 
     /// <summary>
@@ -906,7 +935,7 @@ public sealed partial class MainForm
         var presets = manager.LoadPresets();
         var host = MakePresetHost(chosen);
         var groups = presets.Select(p => p.Group.Trim()).Where(g => g.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-        using var editor = new PresetEditor(L.T("새 프리셋"), chosen.Count == 1 ? chosen[0].Shown : L.F("프리셋 {0}", presets.Count + 1), "", groups, host.Choices(), host.StartLines(null));
+        using var editor = new PresetEditor(L.T("새 프리셋"), chosen.Count == 1 ? chosen[0].Shown : L.F("프리셋 {0}", presets.Count + 1), "", groups, host.Choices(), host.StartLines(null), host.FormatSeparator);
         if (editor.ShowDialog(this) != DialogResult.OK) return;
         presets.Add(editor.Build(new Preset { CreatedAt = DateTime.Now }));
         host.Save(presets);
