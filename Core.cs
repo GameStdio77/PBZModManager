@@ -40,6 +40,13 @@ public sealed class InstallPlan
     public bool HasChanges =>
         NewDirs.Count > 0 || Stale.Count > 0 || Items.Any(i => i.Kind is ChangeKind.Add or ChangeKind.Overwrite);
 
+    /// <summary>
+    /// Another archive of the installed mod whose files are all as installed: authors sometimes raise only the
+    /// version number. Installing it only records the new version.
+    /// </summary>
+    public bool OnlyVersion =>
+        !HasChanges && ReplacesZip != null && !ReplacesZip.Equals(Path.GetFileName(ZipPath), StringComparison.OrdinalIgnoreCase);
+
     public int Count(ChangeKind kind) => Items.Count(i => i.Kind == kind);
 
     /// <summary>Identifies what the plan would do, to detect changes between preview and install.</summary>
@@ -612,7 +619,7 @@ public static class NexusApi
         client.DefaultRequestHeaders.Add("User-Agent", "PBZModManager/1.8");
         // Nexus's API policy asks every client to identify itself with these two.
         client.DefaultRequestHeaders.Add("Application-Name", "PBZModManager");
-        client.DefaultRequestHeaders.Add("Application-Version", "1.8.0");
+        client.DefaultRequestHeaders.Add("Application-Version", "1.8.1");
         return client;
     }
 
@@ -1551,12 +1558,18 @@ public sealed partial class Manager
         if (string.Equals(full, dest, StringComparison.OrdinalIgnoreCase)) return dest;
 
         // The same file under another name, such as one fetched earlier by hand, is not added twice;
-        // the one dropped goes to the Recycle Bin, as it would have been moved anyway.
+        // the one dropped goes to the Recycle Bin, as it would have been moved anyway. A newer version of the
+        // same mod is kept even when its files did not change: the author only raised the number, and the
+        // manager should know the mod is at that version.
         var size = new FileInfo(full).Length;
         var hash = HashFile(full);
+        var incoming = ModIdentity.ParseFileName(Path.GetFileName(full));
         foreach (var existing in Directory.GetFiles(ArchiveDir, "*.zip"))
             if (new FileInfo(existing).Length == size && HashFile(existing) == hash)
             {
+                var had = ModIdentity.ParseFileName(Path.GetFileName(existing));
+                if (incoming.Name.Equals(had.Name, StringComparison.OrdinalIgnoreCase) && incoming.PageId == had.PageId
+                    && incoming.Version.Length > 0 && ModIdentity.CompareVersions(incoming.Version, had.Version) > 0) continue;
                 SendToRecycleBin(full);
                 return existing;
             }
@@ -2095,6 +2108,8 @@ public sealed partial class Manager
 
         plan.NewDirs.AddRange(dirs.OrderBy(d => d.Length).ThenBy(d => d, StringComparer.OrdinalIgnoreCase));
         FindStaleFiles(plan, seen, ModIdentity.KeyOf(seen, Path.GetFileName(zipPath)));
+        if (plan.OnlyVersion)
+            plan.Warnings.Add(L.F("파일 내용이 설치된 {0}과 같습니다. 제작자가 버전 번호만 올린 것으로 보이며, 파일은 그대로 두고 버전 기록만 바꿉니다.", plan.ReplacesZip!));
         if (plan.Relocated.Count > 0)
             plan.Warnings.Add(L.F("Mods Menu용 파일 {0}개를 모드 로더 폴더로 옮겨 설치합니다. Mods Menu의 설정 화면은 쓸 수 없고, 메뉴 기능이 필요한 모드는 동작하지 않을 수 있습니다.", plan.Relocated.Count));
         if (plan.PlacedBesideGame > 0)
@@ -2294,7 +2309,7 @@ public sealed partial class Manager
         var plan = BuildPlan(expected.ZipPath, expected.Chosen, expected.Excluded, progress);
         if (plan.Fingerprint() != expected.Fingerprint())
             throw new InvalidOperationException(L.T("미리보기 이후 게임 폴더가 변경되었습니다. 다시 시도해 주세요."));
-        if (!plan.HasChanges)
+        if (!plan.HasChanges && !plan.OnlyVersion)
             throw new InvalidOperationException(L.T("적용할 변경 사항이 없습니다."));
 
         var changes = plan.Items.Where(i => i.Kind is ChangeKind.Add or ChangeKind.Overwrite).ToList();

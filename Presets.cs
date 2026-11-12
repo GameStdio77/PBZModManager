@@ -884,7 +884,7 @@ public sealed partial class MainForm
             try
             {
                 var plan = manager.BuildPlan(version.Path, options, excluded, progress: p);
-                if (plan.HasChanges) manager.Install(plan, p);
+                if (plan.HasChanges || plan.OnlyVersion) manager.Install(plan, p);
                 return "";
             }
             catch (Exception ex) when (ex is InvalidOperationException or IOException or UnauthorizedAccessException or InvalidDataException)

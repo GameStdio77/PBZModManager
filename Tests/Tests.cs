@@ -1610,6 +1610,32 @@ Test("records from before updates existed still group and remove", root =>
     Check(plan.ReplacesZip == "M 1.0.zip" && plan.Stale.Single().Path.EndsWith("stale.js"), "old record should be recognized");
 });
 
+Test("a newer version with the same files: added as its own, and updating records only the version", root =>
+{
+    var m = new Manager(root);
+    var old = Zip(root, "Bridge 149 0.3.1 2026-11-05T02-21Z a.zip", ("platform/steam/ue4ss/Mods/Bridge/Scripts/main.lua", "same"));
+    Install(m, old);
+    // The newer one arrives from elsewhere with the very same bytes.
+    var outside = Path.Combine(root, "downloads");
+    Directory.CreateDirectory(outside);
+    var incoming = Path.Combine(outside, "Bridge 149 0.9.6 2026-11-11T19-09Z b.zip");
+    File.Copy(old, incoming);
+    var added = m.AddZip(incoming);
+    Check(Path.GetFileName(added) == "Bridge 149 0.9.6 2026-11-11T19-09Z b.zip" && File.Exists(added) && File.Exists(old), "kept as its own version: " + Path.GetFileName(added));
+    // An older or same-version copy is still not added twice.
+    var copy = Path.Combine(outside, "Bridge 149 0.3.1 2026-11-05T02-21Z hand copy.zip");
+    File.Copy(old, copy);
+    Check(m.AddZip(copy) == old, "a copy of the same version is not added again");
+
+    var plan = m.BuildPlan(added);
+    Check(plan.OnlyVersion && !plan.HasChanges && plan.Warnings.Any(w => w.Contains("버전 번호만")), "the plan only changes the version");
+    var tx = m.Install(plan);
+    Check(m.ListInstalled().Single().ZipName == Path.GetFileName(added) && tx.Files.Count == 0, "the new version is the installed one, no file touched");
+    Check(Read(root, "platform/steam/ue4ss/Mods/Bridge/Scripts/main.lua") == "same", "the file is as it was");
+    m.RemoveOne(tx.Id);
+    Check(m.ListInstalled().Single().ZipName == Path.GetFileName(old) && Read(root, "platform/steam/ue4ss/Mods/Bridge/Scripts/main.lua") == "same", "undone: back to the old version, the file still there");
+});
+
 Test("identical archive has nothing to install", root =>
 {
     var zip = Zip(root, "a.zip", ("f.txt", "A"));

@@ -1463,7 +1463,7 @@ public sealed partial class MainForm : Form, IMessageFilter
         action ??= InstallAction(mod, version);
         InstallPlan? plan = await Run(L.T("압축 파일 확인 중..."), p => manager.BuildPlan(version.Path, chosen, progress: p));
         if (plan == null) return;
-        if (!plan.HasChanges && plan.Excluded.Count == 0)
+        if (!plan.HasChanges && plan.Excluded.Count == 0 && !plan.OnlyVersion)
         {
             DarkDialog.Show(this, L.T("게임 폴더의 파일과 모두 같아 설치할 내용이 없습니다."), Text);
             return;
@@ -1519,7 +1519,7 @@ public sealed partial class MainForm : Form, IMessageFilter
             var current = plan;
             plan = await Run(L.T("압축 파일 확인 중..."), p => manager.BuildPlan(version.Path, current.Chosen, unticked, p));
             if (plan == null) return;
-            if (!plan.HasChanges)
+            if (!plan.HasChanges && !plan.OnlyVersion)
             {
                 DarkDialog.Show(this, L.T("고른 파일로는 바뀌는 내용이 없습니다."), Text);
                 return;
