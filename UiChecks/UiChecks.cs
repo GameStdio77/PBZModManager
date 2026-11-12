@@ -52,6 +52,7 @@ static class UiChecks
         {
             using var log = new StreamWriter(Path.Combine(args[0], "results.txt")) { AutoFlush = true };
             Console.SetOut(log);
+            if (args.Length > 2 && args[2].StartsWith("shots:")) return Shots(args[0], args[2][6..]);
             return args.Length > 2 && args[2] != "ko" ? Pictures(args[0], args[2]) : Run(args[0]);
         }
         return StartOnHiddenDesktop(args[0], args.Length > 1 ? args[1] : "ko");
@@ -179,56 +180,150 @@ static class UiChecks
         var standIn = new StandIn();
         var manager = MakeGame(workDir, standIn);
         Manager.DeleteInsteadOfRecycleForTests = true;
-        var alpha = Path.Combine(manager.ModDir, "Alpha 900 1.0 2026-11-01T00-00Z a.zip");
-        Zip(alpha, ("ProjectPBZ/Content/Paks/~mods/Alpha_P.pak", "a"));
-        var meta = manager.LoadMeta();
-        meta[Path.GetFileName(alpha)] = new ModMeta { Registered = true };
-        manager.SaveMeta(meta);
-        manager.SavePresets(new[] { new Preset { Name = "P", Mods = { new PresetMod { Key = ModIdentity.KeyOfZip(alpha), Name = "Alpha", Version = "1.0" } } } });
+        // Copies of two real Bridge archives, the installed 0.3.1 and the 0.9.6 with the same files,
+        // given by BRIDGE_OLD and BRIDGE_NEW (full paths).
+        var oldPath = Environment.GetEnvironmentVariable("BRIDGE_OLD")!;
+        var oldName = Path.GetFileName(oldPath);
+        File.Copy(oldPath, Path.Combine(manager.ModDir, oldName));
+        manager.Install(manager.BuildPlan(Path.Combine(manager.ModDir, oldName)));
+        var newPath = Environment.GetEnvironmentVariable("BRIDGE_NEW")!;
+        var incoming = Path.Combine(workDir, Path.GetFileName(newPath));
+        File.Copy(newPath, incoming);
+
         var form = new MainForm(manager, Array.Empty<string>(), _ => { }) { StartPosition = FormStartPosition.Manual, ShowInTaskbar = false, ClientSize = new Size(1500, 860) };
-        Application.ThreadException += (_, e) => { Check("no unhandled error: " + e.Exception.GetType().Name + " " + e.Exception.Message, false); };
+        Application.ThreadException += (_, e) => Check("no unhandled error: " + e.Exception.Message, false);
         form.Shown += async (_, _) =>
         {
             try
             {
                 await Task.Delay(1000);
                 var zipList = All(form).OfType<DarkListView>().First();
-
-                // The list is drawn again on every refresh: are its lines kept when nothing changed?
-                var before = zipList.Items.Cast<ListViewItem>().ToList();
-                typeof(MainForm).GetMethod("RenderZips", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.Invoke(form, null);
-                var after = zipList.Items.Cast<ListViewItem>().ToList();
-                Check("unchanged lines are kept, not rebuilt", before.Count > 0 && before.SequenceEqual(after));
-
-                // Presets: the dialog stays open while a preset is applied.
-                ((DarkButton)All(form).OfType<Button>().Single(b => b.Text == "프리셋...")).Press();
-                var dialog = await Window<PresetDialog>(form);
-                var on = (DarkButton)Find(dialog, "모드 켜기");
-                dialog.BeginInvoke(() => on.Press());
-                var preview = await Window<PresetPreview>(form);
-                preview.DialogResult = DialogResult.OK;
-                for (int n = 0; n < 30; n++) await Task.Delay(100);
-                Check("applied with the dialog open: " + string.Join(", ", manager.ListInstalled().Select(m => m.Name)), !dialog.IsDisposed && dialog.Visible && manager.ListInstalled().Any(m => m.Name == "Alpha"));
-                var state = All(dialog).OfType<DarkListView>().First().Items[0].SubItems[3].Text;
-                Check("its state follows: " + state, state == "적용됨");
-                dialog.Close();
-                await Task.Delay(300);
-
-                // Settings: the game folder emptied, then saved.
-                ((DarkButton)All(form).OfType<Button>().Single(b => b.Text == "설정...")).Press();
-                var settings = await Window<SettingsDialog>(form);
-                All(settings).OfType<TextBox>().Single(b => b.Text == manager.Root).Text = "";
-                var save = (DarkButton)Find(settings, "저장");
-                settings.BeginInvoke(() => save.Press());
+                var adding = (Task)typeof(MainForm).GetMethod("AddZips", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                    .Invoke(form, new object[] { new[] { incoming } })!;
+                // The new version is offered as an update: answered yes.
+                var offer = await Window<Form>(form, f => f.Visible && f.Modal && f != form);
+                var words = string.Join(" ", All(offer).OfType<Label>().Select(l => l.Text));
+                Check("offered as an update: " + words, words.Contains("새 버전을 추가했습니다") && words.Contains("0.9.6"));
+                offer.DialogResult = DialogResult.Yes;
+                var plan = await Window<PlanDialog>(form);
+                var planWords = string.Join(" ", All(plan).OfType<Control>().Select(c => c.Text));
+                Check("the preview says only the version changes", planWords.Contains("버전 번호만"));
+                plan.DialogResult = DialogResult.OK;
+                await adding;
                 await Task.Delay(800);
-                Check("an emptied game folder is refused, not a crash", !settings.IsDisposed);
-                Check("told why", Shows(settings, "게임 폴더를 골라 주세요."));
-                Check("no automatic check at start offered", !All(settings).OfType<CheckBox>().Any(c => c.Text.Contains("자동 확인")));
-                if (!settings.IsDisposed) settings.Close();
+                var installed = manager.ListInstalled().Single(m => m.Name.Contains("Bridge"));
+                Check("installed version now 0.9.6: " + installed.ZipName, installed.Version == "0.9.6");
+                var row = zipList.Items.Cast<ListViewItem>().First(i => i.Tag is ModGroup g && g.Name.Contains("Bridge"));
+                Check("status: " + row.SubItems[5].Text, row.SubItems[5].Text == "설치됨 (0.9.6)");
             }
             catch (Exception ex)
             {
                 Check("check stopped: " + ex.GetType().Name + " " + ex.Message, false);
+            }
+            form.Close();
+        };
+        Application.Run(form);
+        Console.WriteLine(failures == 0 ? "ALL PASSED" : $"{failures} FAILED");
+        return failures == 0 ? 0 : 1;
+    }
+
+    sealed class Quiet : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(request.RequestUri!.Host.Contains("github") ? "[]" : """{"data":{}}""", Encoding.UTF8, "application/json") });
+    }
+
+    /// <summary>
+    /// README pictures from a copy of real records: workDir holds "game" (folders only) and "mods\.manager".
+    /// Every dialog is cancelled; nothing is installed.
+    /// </summary>
+    static int Shots(string workDir, string language)
+    {
+        L.Use(language);
+        Manager.IgnoreGameForTests = true;
+        Manager.DeleteInsteadOfRecycleForTests = true;
+        NexusApi.UseHandlerForChecks(new Quiet());
+        var manager = new Manager(Path.Combine(workDir, "game"), Path.Combine(workDir, "mods"));
+        var outDir = Path.Combine(workDir, "shots");
+        Directory.CreateDirectory(outDir);
+        var form = new MainForm(manager, Array.Empty<string>(), _ => { }) { StartPosition = FormStartPosition.Manual, ShowInTaskbar = false };
+        // The window as Windows draws it (PrintWindow, so the list's own scroll bars stay hidden), without the title bar.
+        void Save(Control c, string name)
+        {
+            using var whole = new Bitmap(c.Width, c.Height);
+            using (var g = Graphics.FromImage(whole))
+            {
+                var dc = g.GetHdc();
+                PrintWindow(c.Handle, dc, 2);
+                g.ReleaseHdc(dc);
+            }
+            var origin = c.PointToScreen(Point.Empty);
+            var client = new Rectangle(origin.X - c.Bounds.X, origin.Y - c.Bounds.Y, c.ClientSize.Width, c.ClientSize.Height);
+            using var cut = whole.Clone(client, whole.PixelFormat);
+            cut.Save(Path.Combine(outDir, $"{name}-{language}.png"));
+        }
+        void Later(Action a) => form.BeginInvoke(a);
+        form.Shown += async (_, _) =>
+        {
+            try
+            {
+                form.WindowState = FormWindowState.Normal;
+                form.ClientSize = new Size(1440, 860);
+                await Task.Delay(1500);
+                // The paths in the header are the user's own; shown as a usual Steam library instead.
+                foreach (var label in All(form).OfType<Label>().Where(l => l.Text.Contains(manager.Root)))
+                    label.Text = L.F("게임: {0}    모드 보관: {1}", @"D:\SteamLibrary\steamapps\common\PBZ", @"D:\SteamLibrary\steamapps\common\PBZ\MOD\.manager\archives");
+                // This tool's own version is not the manager's.
+                foreach (var label in All(form).OfType<Label>().Where(l => l.Text.StartsWith("GitHub · v")))
+                    label.Text = "GitHub · v" + Environment.GetEnvironmentVariable("SHOT_VERSION");
+                // A mod row chosen in the installed list rather than the separator at the top.
+                var installedList = All(form).OfType<DarkListView>().Skip(1).First();
+                var firstMod = installedList.Items.Cast<ListViewItem>().First(i => i.SubItems[0].Text.Trim().Length > 0 && char.IsDigit(i.SubItems[0].Text.Trim()[0]));
+                foreach (ListViewItem i in installedList.Items) i.Selected = i == firstMod;
+                await Task.Delay(300);
+                Save(form, "main");
+
+                // Install preview of a mod not installed now.
+                var mods = (List<ModGroup>)typeof(MainForm).GetField("mods", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(form)!;
+                var pick = mods.Where(m => m.InstalledFile == null && !m.Latest.Missing).ToList();
+                Console.WriteLine("not installed: " + string.Join(" | ", pick.Select(m => m.Shown)));
+                var mod = pick.FirstOrDefault(m => m.Shown.Contains(Environment.GetEnvironmentVariable("SHOT_MOD") ?? "\u0001")) ?? pick.First();
+                var installing = (Task)typeof(MainForm).GetMethod("InstallVersion", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                    .Invoke(form, new object?[] { mod, mod.Latest, null })!;
+                var next = await Window<Form>(form, f => f.Visible && f.Modal && f != form);
+                if (next is OptionsDialog options)
+                {
+                    Save(options, "options");
+                    options.DialogResult = DialogResult.OK;
+                    next = await Window<PlanDialog>(form);
+                }
+                if (next is PlanDialog plan)
+                {
+                    await Task.Delay(400);
+                    Save(plan, "plan");
+                }
+                next.DialogResult = DialogResult.Cancel;
+                await installing;
+
+                // Presets and the editor of the first one.
+                Later(() => typeof(MainForm).GetMethod("OpenPresets", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.Invoke(form, new object?[] { null }));
+                var presets = await Window<PresetDialog>(form);
+                await Task.Delay(400);
+                Save(presets, "presets");
+                var edit = Find(presets, L.T("수정..."));
+                Later(() => Click(edit));
+                var editor = await Window<PresetEditor>(form);
+                await Task.Delay(400);
+                Save(editor, "preset-editor");
+                editor.DialogResult = DialogResult.Cancel;
+                await Task.Delay(300);
+                presets.DialogResult = DialogResult.Cancel;
+                await Task.Delay(300);
+                Check("pictures drawn in " + language, true);
+            }
+            catch (Exception ex)
+            {
+                Check("pictures stopped: " + ex.GetType().Name + " " + ex.Message, false);
             }
             form.Close();
         };
